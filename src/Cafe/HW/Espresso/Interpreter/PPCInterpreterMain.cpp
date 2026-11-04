@@ -4,6 +4,8 @@
 #include "Cafe/HW/Espresso/Debugger/Debugger.h"
 
 thread_local PPCInterpreter_t* ppcInterpreterCurrentInstance;
+// Thor fix: fibers migrate between host threads; never let the compiler reuse a cached TLS base
+[[gnu::noinline]] static PPCInterpreter_t*& _tlsCurrentInstance() { asm volatile("" ::: "memory"); return ppcInterpreterCurrentInstance; }
 
 // main thread instruction counter and timing
 uint64 ppcMainThreadDECCycleValue = 0; // value that was set to dec register
@@ -30,12 +32,12 @@ PPCInterpreter_t* PPCInterpreter_createInstance(unsigned int Entrypoint)
 
 TLS_WORKAROUND_NOINLINE PPCInterpreter_t* PPCInterpreter_getCurrentInstance()
 {
-	return ppcInterpreterCurrentInstance;
+	return _tlsCurrentInstance();
 }
 
 TLS_WORKAROUND_NOINLINE void PPCInterpreter_setCurrentInstance(PPCInterpreter_t* hCPU)
 {
-	ppcInterpreterCurrentInstance = hCPU;
+	_tlsCurrentInstance() = hCPU;
 }
 
 uint64 PPCInterpreter_getMainCoreCycleCounter()

@@ -2,6 +2,8 @@
 #include "coreinit_Scheduler.h"
 
 thread_local sint32 s_schedulerLockCount = 0;
+// Thor fix: fibers migrate between host threads; never let the compiler reuse a cached TLS base
+[[gnu::noinline]] static sint32& _tlsSchedLockCount() { asm volatile("" ::: "memory"); return s_schedulerLockCount; }
 
 #if BOOST_OS_WINDOWS
 #include <synchapi.h>
@@ -18,13 +20,13 @@ void __OSLockScheduler(void* obj)
 #else
 	pthread_mutex_lock(&s_ptmSchedulerLock);
 #endif
-	s_schedulerLockCount++;
-	cemu_assert_debug(s_schedulerLockCount <= 1); // >= 2 should not happen. Scheduler lock does not allow recursion
+	_tlsSchedLockCount()++;
+	cemu_assert_debug(_tlsSchedLockCount() <= 1); // >= 2 should not happen. Scheduler lock does not allow recursion
 }
 
 bool __OSHasSchedulerLock()
 {
-	return s_schedulerLockCount > 0;
+	return _tlsSchedLockCount() > 0;
 }
 
 bool __OSTryLockScheduler(void* obj)
@@ -37,7 +39,7 @@ bool __OSTryLockScheduler(void* obj)
 #endif
 	if (r)
 	{
-		s_schedulerLockCount++;
+		_tlsSchedLockCount()++;
 		return true;
 	}
 	return false;
@@ -45,8 +47,8 @@ bool __OSTryLockScheduler(void* obj)
 
 void __OSUnlockScheduler(void* obj)
 {
-	s_schedulerLockCount--;
-	cemu_assert_debug(s_schedulerLockCount >= 0);
+	_tlsSchedLockCount()--;
+	cemu_assert_debug(_tlsSchedLockCount() >= 0);
 #if BOOST_OS_WINDOWS
 	LeaveCriticalSection(&s_csSchedulerLock);
 #else

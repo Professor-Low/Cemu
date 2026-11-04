@@ -1,6 +1,8 @@
 #include "FiberFContext.h"
 
 thread_local Fiber* sCurrentFiber = nullptr;
+// Thor fix: fibers migrate between host threads; never let the compiler reuse a cached TLS base
+[[gnu::noinline]] static Fiber*& _tlsCurrentFiber() { asm volatile("" ::: "memory"); return sCurrentFiber; }
 
 using namespace boost::context::detail;
 
@@ -33,17 +35,17 @@ Fiber::~Fiber()
 
 Fiber* Fiber::PrepareCurrentThread(void* privateData)
 {
-	sCurrentFiber = new Fiber(privateData);
-	return sCurrentFiber;
+	_tlsCurrentFiber() = new Fiber(privateData);
+	return _tlsCurrentFiber();
 }
 
 void Fiber::Switch(Fiber& targetFiber)
 {
-	if (&targetFiber == sCurrentFiber)
+	if (&targetFiber == _tlsCurrentFiber())
 		return;
 
-	Fiber* thisFiber = sCurrentFiber;
-	sCurrentFiber = &targetFiber;
+	Fiber* thisFiber = _tlsCurrentFiber();
+	_tlsCurrentFiber() = &targetFiber;
 	targetFiber.m_prevFiber = thisFiber;
 	transfer_t transfer = jump_fcontext(targetFiber.m_context, &targetFiber);
 	thisFiber->m_prevFiber->m_context = transfer.fctx;
@@ -51,5 +53,5 @@ void Fiber::Switch(Fiber& targetFiber)
 
 void* Fiber::GetFiberPrivateData()
 {
-	return sCurrentFiber->m_privateData;
+	return _tlsCurrentFiber()->m_privateData;
 }
