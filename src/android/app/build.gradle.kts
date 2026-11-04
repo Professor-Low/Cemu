@@ -49,7 +49,7 @@ android {
         minSdk = 30
         targetSdk = 35
         versionName = getVersionName()
-        versionCode = 51
+        versionCode = 52
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -85,6 +85,8 @@ android {
             applicationIdSuffix = ".debug"
         }
         release {
+            applicationIdSuffix = System.getenv("CEMU_APPID_SUFFIX") ?: ""
+            versionNameSuffix = System.getenv("CEMU_VERSION_SUFFIX") ?: ""
             isMinifyEnabled = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),

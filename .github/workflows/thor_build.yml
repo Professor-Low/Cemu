@@ -1,0 +1,50 @@
+name: Thor build
+on:
+  workflow_dispatch:
+  push:
+    branches: [thor-bo2]
+permissions:
+  contents: read
+  packages: write
+env:
+  VCPKG_ROOT: "${{github.workspace}}/dependencies/vcpkg"
+  VCPKG_BINARY_SOURCES: "clear;nuget,GitHub,readwrite"
+  VCPKG_FORCE_DOWNLOADED_BINARIES: true
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+      - run: sudo apt update -qq && sudo apt install -y gettext mono-complete ccache
+      - uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: thor-arm64
+          max-size: 3G
+      - uses: ./.github/actions/set-up-vcpkg-binary-cache-action
+        with:
+          github-token: "${{ secrets.GITHUB_TOKEN }}"
+      - name: Build
+        env:
+          CEMU_APPID_SUFFIX: ".thor"
+          CEMU_VERSION_SUFFIX: "-thor"
+          EMULATOR_VERSION_MAJOR: "0"
+          EMULATOR_VERSION_MINOR: "52"
+        run: |
+          export JAVA_HOME=$JAVA_HOME_21_X64
+          export CCACHE_DIR=$HOME/.ccache
+          sed -i 's/"-DENABLE_HIDAPI=OFF"/"-DENABLE_HIDAPI=OFF", "-DCMAKE_C_COMPILER_LAUNCHER=ccache", "-DCMAKE_CXX_COMPILER_LAUNCHER=ccache"/' src/android/app/build.gradle.kts
+          cd src/android
+          ./gradlew assembleRelease --no-daemon
+          ccache -s || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cemu-thor-apk
+          path: src/android/app/build/outputs/apk/release/*.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cemu-thor-symbols
+          path: src/android/app/build/intermediates/cxx/**/obj/arm64-v8a/libCemuAndroid.so
+          if-no-files-found: warn
