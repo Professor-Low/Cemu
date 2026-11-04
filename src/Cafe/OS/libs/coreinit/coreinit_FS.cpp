@@ -441,13 +441,18 @@ namespace coreinit
 		FSCmdBlockBody* dequeuedCmd = cmdQueue->first;
 		if (cmdQueue->first == cmdQueue->last)
 			cmdQueue->last = nullptr;
-		cmdQueue->first = dequeuedCmd->next;
-		dequeuedCmd->next = nullptr;
-		if (dequeuedCmd->next)
-		{
-			FSCmdBlockBody* fsCmdBodyNext = dequeuedCmd->next;
+		// Thor fix: the original code nulled dequeuedCmd->next before reading it, so the new head kept a
+		// dangling 'previous' pointer to the dequeued (often stack-allocated) cmd block. With several
+		// PPC cores queueing on one client (BO2 stream thread) the priority insert then walked into
+		// freed memory -> SIGSEGV in __FSUpdateQueue.
+		FSCmdBlockBody* fsCmdBodyNext = dequeuedCmd->next.GetPtr();
+		cmdQueue->first = fsCmdBodyNext;
+		if (fsCmdBodyNext)
 			fsCmdBodyNext->previous = nullptr;
-		}
+		else
+			cmdQueue->last = nullptr;
+		dequeuedCmd->next = nullptr;
+		dequeuedCmd->previous = nullptr;
 		return dequeuedCmd;
 	}
 
