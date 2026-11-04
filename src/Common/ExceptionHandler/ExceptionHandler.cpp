@@ -158,3 +158,55 @@ void ExceptionHandler_LogGeneralInfo()
         CrashLog_WriteLine(dumpLine);
     }
 }
+
+
+// ---- Thor diagnostics: on-demand guest thread dump -------------------------------------------
+// Create <userdata>/dump_threads (e.g. via adb) and every guest thread is written to log.txt with
+// state, IP/LR, wait objects and a symbolised PPC stack trace. Used to debug soft-locks/deadlocks.
+#include <thread>
+void ExceptionHandler_DumpAllThreads()
+{
+	char line[512];
+	CrashLog_WriteLine("");
+	CrashLog_WriteHeader("Thor thread dump (on demand)");
+	for (sint32 i = 0; i < activeThreadCount; i++)
+	{
+		MPTR tMPTR = activeThread[i];
+		OSThread_t* t = (OSThread_t*)memory_getPointerFromVirtualOffset(tMPTR);
+		const char* name = t->threadName.IsNull() ? "NULL" : t->threadName.GetPtr();
+		sprintf(line, "== %08x '%s' state %d susp %d pri %d IP %08x LR %08x SP %08x mutex %08x fastmutex %08x",
+			tMPTR, name, (int)t->state.value(), (int)t->suspendCounter, (int)t->effectivePriority,
+			(uint32)t->context.srr0, (uint32)_swapEndianU32(t->context.lr), (uint32)_swapEndianU32(t->context.gpr[1]),
+			t->waitingForMutex.GetMPTR(), t->waitingForFastMutex.GetMPTR());
+		CrashLog_WriteLine(line);
+		MPTR sp = _swapEndianU32(t->context.gpr[1]);
+		if (sp && memory_isAddressRangeAccessible(sp, 8))
+			DebugLogStackTrace(t, sp, true);
+	}
+	CrashLog_WriteLine("== end of thread dump");
+}
+
+static void ThorDiag_WatchThread()
+{
+	while (true)
+	{
+		std::this_thread::sleep_for(std::chrono::seconds(2));
+		std::error_code ec;
+		fs::path trigger = ActiveSettings::GetUserDataPath("dump_threads");
+		if (fs::exists(trigger, ec))
+		{
+			fs::remove(trigger, ec);
+			if (CafeSystem::IsTitleRunning())
+				ExceptionHandler_DumpAllThreads();
+		}
+	}
+}
+
+void ExceptionHandler_StartThorDiagnostics()
+{
+	static bool started = false;
+	if (started)
+		return;
+	started = true;
+	std::thread(ThorDiag_WatchThread).detach();
+}

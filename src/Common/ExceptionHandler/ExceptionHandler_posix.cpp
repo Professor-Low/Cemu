@@ -175,4 +175,5 @@ void ExceptionHandler_Init()
 	sigaction(SIGSEGV, &action, nullptr);
 	sigaction(SIGSYS, &action, nullptr);
 	sigaction(SIGTRAP, &action, nullptr);
+	ExceptionHandler_StartThorDiagnostics();
 }
