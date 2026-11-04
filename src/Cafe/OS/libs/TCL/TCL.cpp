@@ -1,3 +1,4 @@
+#include <mutex>
 #include "Cafe/OS/common/OSCommon.h"
 #include "Cafe/OS/libs/TCL/TCL.h"
 
@@ -129,8 +130,20 @@ namespace TCL
 		TCLWriteCmd(cmd, 6);
 	}
 
+	// Thor fix: TCLSubmitToRing is a serialized kernel call on hardware. Cemu had no lock, so two PPC cores
+	// submitting at once could interleave command words in the ring (and race s_currentRetireMarker++).
+	static std::mutex s_tclSubmitMutex;
+
+	void TCLDebugGetRingState(uint32& readIdx, uint32& writeIdx, uint64& retireMarker)
+	{
+		readIdx = tclRingBufferA_readIndex.load();
+		writeIdx = tclRingBufferA_writeIndex.load();
+		retireMarker = s_currentRetireMarker;
+	}
+
 	int TCLSubmitToRing(uint32be* cmd, uint32 cmdLen, betype<TCLSubmissionFlag>* controlFlags, uint64be* timestampValueOut)
 	{
+		std::unique_lock _submitLock(s_tclSubmitMutex);
 		TCLSubmissionFlag flags = *controlFlags;
 		cemu_assert_debug(timestampValueOut); // handle case where this is null
 

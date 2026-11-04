@@ -164,6 +164,7 @@ void ExceptionHandler_LogGeneralInfo()
 // Create <userdata>/dump_threads (e.g. via adb) and every guest thread is written to log.txt with
 // state, IP/LR, wait objects and a symbolised PPC stack trace. Used to debug soft-locks/deadlocks.
 #include <thread>
+#include "Cafe/OS/libs/TCL/TCL.h"
 void ExceptionHandler_DumpAllThreads()
 {
 	char line[512];
@@ -182,6 +183,12 @@ void ExceptionHandler_DumpAllThreads()
 		MPTR sp = _swapEndianU32(t->context.gpr[1]);
 		if (sp && memory_isAddressRangeAccessible(sp, 8))
 			DebugLogStackTrace(t, sp, true);
+	}
+	{
+		uint32 rIdx, wIdx; uint64 marker;
+		TCL::TCLDebugGetRingState(rIdx, wIdx, marker);
+		sprintf(line, "== GPU ring read %u write %u retireMarker %llu", rIdx, wIdx, (unsigned long long)marker);
+		CrashLog_WriteLine(line);
 	}
 	CrashLog_WriteLine("== end of thread dump");
 }
