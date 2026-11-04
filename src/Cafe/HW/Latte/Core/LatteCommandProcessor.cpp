@@ -423,8 +423,14 @@ LatteCMDPtr LatteCP_itWaitRegMem(LatteCMDPtr cmd, uint32 nWords)
 	{
 		// wait for memory address
 		performanceMonitor.gpuTime_fenceTime.beginMeasuring();
+		auto thorWaitStart = std::chrono::steady_clock::now(); bool thorLogged = false;
 		while (true)
 		{
+			if (!thorLogged && std::chrono::steady_clock::now() - thorWaitStart > std::chrono::seconds(2))
+			{
+				thorLogged = true;
+				cemuLog_log(LogType::Force, "Thor GPU: WAIT_REG_MEM >2s phys 0x{:08x} op {} ref 0x{:08x} mask 0x{:08x} cur 0x{:08x}", physAddr, compareOp, fenceValue, fenceMask, _swapEndianU32(*fencePtr));
+			}
 			uint32 fenceMemValue = _swapEndianU32(*fencePtr);
 			fenceMemValue &= fenceMask;
 			if (compareOp == GPU7_WAIT_MEM_OP_LESS)
@@ -577,11 +583,17 @@ LatteCMDPtr LatteCP_itMemSemaphore(LatteCMDPtr cmd, uint32 nWords)
 		// wait
 		LatteCP_signalEnterWait();
 		size_t loopCount = 0;
+		auto thorWaitStart = std::chrono::steady_clock::now(); bool thorLogged = false;
 		while (true)
 		{
 			uint64le oldVal = semaphoreData->load();
 			if (oldVal == 0)
 			{
+				if (!thorLogged && std::chrono::steady_clock::now() - thorWaitStart > std::chrono::seconds(2))
+				{
+					thorLogged = true;
+					cemuLog_log(LogType::Force, "Thor GPU: MEM_SEMAPHORE wait >2s phys 0x{:08x}", semaphorePhysicalAddress);
+				}
 				loopCount++;
 				if (loopCount > 2000)
 					std::this_thread::yield();
@@ -906,9 +918,15 @@ LatteCMDPtr LatteCP_itHLEWaitForFlip(LatteCMDPtr cmd, uint32 nWords)
 	MPTR reserved1 = LatteReadCMD(); // reserved
 	// wait for flip
 	uint32 currentFlipCount = LatteGPUState.flipCounter;
+	auto thorWaitStart = std::chrono::steady_clock::now(); bool thorLogged = false;
 	while (true)
 	{
 		_mm_pause();
+		if (!thorLogged && std::chrono::steady_clock::now() - thorWaitStart > std::chrono::seconds(2))
+		{
+			thorLogged = true;
+			cemuLog_log(LogType::Force, "Thor GPU: HLE WaitForFlip >2s flipCounter {}", currentFlipCount);
+		}
 		if (currentFlipCount != LatteGPUState.flipCounter)
 		{
 			break;
