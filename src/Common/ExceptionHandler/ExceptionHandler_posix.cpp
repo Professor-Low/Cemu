@@ -1,3 +1,5 @@
+#include <dlfcn.h>
+#include <ucontext.h>
 #include <signal.h>
 #include <execinfo.h>
 #include <string.h>
@@ -93,6 +95,23 @@ void handlerDumpingSignal(int sig, siginfo_t *info, void *context)
 	}
     CrashLog_WriteLine(fmt::format("Error: signal {}:", sig));
 #if BOOST_PLAT_ANDROID
+#if defined(__aarch64__)
+    {
+        // Thor diagnostics: fault address + host registers, so crashes are debuggable without a tombstone
+        ucontext_t* uc = (ucontext_t*)context;
+        Dl_info dli{};
+        uintptr_t pc = (uintptr_t)uc->uc_mcontext.pc;
+        uintptr_t base = 0;
+        if (dladdr((void*)pc, &dli) && dli.dli_fbase)
+            base = (uintptr_t)dli.dli_fbase;
+        CrashLog_WriteLine(fmt::format("fault addr {:#x} code {} pc {:#x} (lib+{:#x}) lr {:#x} sp {:#x}",
+            (uintptr_t)info->si_addr, info->si_code, pc, pc - base, (uintptr_t)uc->uc_mcontext.regs[30], (uintptr_t)uc->uc_mcontext.sp));
+        for (int r = 0; r < 30; r += 6)
+            CrashLog_WriteLine(fmt::format("x{}={:#x} x{}={:#x} x{}={:#x} x{}={:#x} x{}={:#x} x{}={:#x}",
+                r, uc->uc_mcontext.regs[r], r+1, uc->uc_mcontext.regs[r+1], r+2, uc->uc_mcontext.regs[r+2],
+                r+3, uc->uc_mcontext.regs[r+3], r+4, uc->uc_mcontext.regs[r+4], r+5, uc->uc_mcontext.regs[r+5]));
+    }
+#endif
     CrashLog_WriteLine(to_string(boost::stacktrace::stacktrace()));
 #else
 	void* backtraceArray[128];

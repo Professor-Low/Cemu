@@ -1,3 +1,4 @@
+#include <shared_mutex>
 #include <zlib.h>
 
 #include "Cafe/OS/common/OSCommon.h"
@@ -719,8 +720,20 @@ void _calculateMappedImportNameHash(const char* rplName, const char* funcName, u
 	*h2Out = h2;
 }
 
+// Thor fix: g_map_callableExports was read and written without synchronisation. With the multi-core
+// recompiler, one core registering a new callback (std::map insert/rebalance) while another core looks
+// one up (e.g. __FSUpdateQueue -> __FSAIoctlResponseCallback) crashed with SIGSEGV (BO2 match load).
+static std::shared_mutex s_callableExportsMutex;
+
 uint32 RPLLoader_MakePPCCallable(void(*ppcCallableExport)(PPCInterpreter_t* hCPU))
 {
+	{
+		std::shared_lock _rl(s_callableExportsMutex);
+		auto it = g_map_callableExports.find(ppcCallableExport);
+		if (it != g_map_callableExports.end())
+			return it->second;
+	}
+	std::unique_lock _wl(s_callableExportsMutex);
 	auto it = g_map_callableExports.find(ppcCallableExport);
 	if (it != g_map_callableExports.end())
 		return it->second;
@@ -2494,7 +2507,7 @@ void RPLLoader_UnloadAll()
 	// free all code imports
 	g_heapTrampolineArea.releaseAll();
 	list_mappedFunctionImports.clear();
-	g_map_callableExports.clear();
+	{ std::unique_lock _wl(s_callableExportsMutex); g_map_callableExports.clear(); }
 	rplLoader_applicationHasMemoryControl = false;
 	rplLoader_maxCodeAddress = 0;
 	rplLoader_currentDataAllocatorAddr = 0x10000000;
