@@ -28,6 +28,9 @@ jobs:
           github-token: "${{ secrets.GITHUB_TOKEN }}"
       - name: Build
         env:
+          ANDROID_STORE_FILE_BASE64: ${{ secrets.ANDROID_STORE_FILE_BASE64 }}
+          ANDROID_KEY_STORE_PASSWORD: ${{ secrets.ANDROID_KEY_STORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           CEMU_APPID_SUFFIX: ".thor"
           CEMU_VERSION_SUFFIX: "-thor"
           EMULATOR_VERSION_MAJOR: "0"
@@ -37,6 +40,7 @@ jobs:
           export CCACHE_DIR=$HOME/.ccache
           sed -i 's/"-DENABLE_HIDAPI=OFF"/"-DENABLE_HIDAPI=OFF", "-DCMAKE_C_COMPILER_LAUNCHER=ccache", "-DCMAKE_CXX_COMPILER_LAUNCHER=ccache"/' src/android/app/build.gradle.kts
           cd src/android
+          if [[ -n "$ANDROID_STORE_FILE_BASE64" ]]; then base64 --decode <<< "$ANDROID_STORE_FILE_BASE64" > store.jks; export ANDROID_STORE_FILE=$(pwd)/store.jks; fi
           ./gradlew assembleRelease --no-daemon
           ccache -s || true
       - uses: actions/upload-artifact@v4
