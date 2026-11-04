@@ -1,3 +1,4 @@
+#include <atomic>
 #include "../PPCState.h"
 #include "PPCInterpreterInternal.h"
 #include "PPCInterpreterHelper.h"
@@ -336,7 +337,8 @@ void PPCInterpreter_SC(PPCInterpreter_t* hCPU, uint32 Opcode)
 
 void PPCInterpreter_SYNC(PPCInterpreter_t* hCPU, uint32 Opcode)
 {
-	// no-op
+	// Thor fix: real barrier so guest stores are ordered across host cores on weakly-ordered hosts (AArch64)
+	std::atomic_thread_fence(std::memory_order_seq_cst);
 	// next instruction
 	PPCInterpreter_nextInstruction(hCPU);
 }

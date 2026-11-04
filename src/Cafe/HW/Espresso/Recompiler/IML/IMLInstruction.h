@@ -248,6 +248,9 @@ enum
 	PPCREC_IML_TYPE_X86_EFLAGS_JCC,
 };
 
+// operation value for PPCREC_IML_TYPE_NO_OP: 0 = plain no-op, 1 = full memory barrier (PPC sync/lwsync)
+#define PPCREC_IML_NO_OP_MEMORY_BARRIER 1
+
 enum // IMLName
 {
 	PPCREC_NAME_NONE,

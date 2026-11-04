@@ -775,6 +775,12 @@ bool PPCRecompilerImlGen_ISYNC(ppcImlGenContext_t* ppcImlGenContext, uint32 opco
 
 bool PPCRecompilerImlGen_SYNC(ppcImlGenContext_t* ppcImlGenContext, uint32 opcode)
 {
+	// Thor fix: sync/lwsync used to generate nothing. Fine on x86 (TSO) but on AArch64 guest stores from
+	// one core could become visible out of order on another core, breaking the game's publish patterns
+	// (BO2: sound bank name read as "" -> "sound bank failed to load"). Emit a full barrier marker.
+	IMLInstruction& inst = ppcImlGenContext->emitInst();
+	inst.make_no_op();
+	inst.operation = PPCREC_IML_NO_OP_MEMORY_BARRIER;
 	return true;
 }
 
