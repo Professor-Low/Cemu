@@ -695,9 +695,14 @@ EmulatedControllerPtr InputManager::delete_controller(size_t player_index, bool 
 		{
 			controller = {};
 
-			std::error_code ec{};
-			fs::remove(ActiveSettings::GetConfigPath("controllerProfiles/controller{}.xml", player_index), ec);
-			fs::remove(ActiveSettings::GetConfigPath("controllerProfiles/controller{}.txt", player_index), ec);
+			// Thor fix: honour delete_profile for WPAD too. Without this, a game profile that swaps a
+			// Classic/Pro controller slot to a GamePad wiped the user's global controllerN.xml.
+			if (delete_profile)
+			{
+				std::error_code ec{};
+				fs::remove(ActiveSettings::GetConfigPath("controllerProfiles/controller{}.xml", player_index), ec);
+				fs::remove(ActiveSettings::GetConfigPath("controllerProfiles/controller{}.txt", player_index), ec);
+			}
 
 			return result;
 		}
