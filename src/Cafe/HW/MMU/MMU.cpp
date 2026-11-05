@@ -125,9 +125,43 @@ MMURange mmuRange_CORE1_LC				{ 0xFFC40000, 0x00005000, MMU_MEM_AREA_ID::CPU_LC1
 MMURange mmuRange_CORE2_LC				{ 0xFFC80000, 0x00005000, MMU_MEM_AREA_ID::CPU_LC2, "CORE2_LC" }; // locked L2 cache of core 2
 MMURange mmuRange_HIGHMEM				{ 0xFFFFF000, 0x00001000, MMU_MEM_AREA_ID::CPU_PER_CORE, "PER-CORE" }; // per-core memory? Used by coreinit and PPC kernel to store core context specific data (like current thread ptr). We dont use it but Project Zero has a bug where it writes a byte at 0xfffffffe thus this memory range needs to be writable
 
+#if !BOOST_OS_WINDOWS
+// Reserve the 4GB guest space at a host address aligned to 'alignment'.
+// coreinit's heaps (MEMAllocFromExpHeapEx & co) align *host* pointers, so a guest alignment request
+// only comes out right if memory_base itself is at least that aligned. On Android mmap() returns
+// arbitrary 4KB-aligned addresses (ASLR), so any guest alignment > 4KB silently broke on ~half the
+// launches (e.g. BO2 Zombies' 64KB-aligned PhysicalMemory pool -> fastfile pointers off by 0x1000 ->
+// "sound bank failed to load zmb_patch.all", missing gunshot / zombie audio).
+static uint8* memory_reserveAligned(size_t size, size_t alignment)
+{
+	uint8* raw = (uint8*)MemMapper::ReserveMemory(nullptr, size + alignment, MemMapper::PAGE_PERMISSION::P_RW);
+	if (!raw || raw == (uint8*)-1)
+		return nullptr;
+	uint8* aligned = (uint8*)(((uintptr_t)raw + alignment - 1) & ~(uintptr_t)(alignment - 1));
+	if (aligned > raw)
+		MemMapper::FreeReservation(raw, aligned - raw);
+	uint8* rawEnd = raw + size + alignment;
+	uint8* alignedEnd = aligned + size;
+	if (rawEnd > alignedEnd)
+		MemMapper::FreeReservation(alignedEnd, rawEnd - alignedEnd);
+	return aligned;
+}
+#endif
+
 void memory_init()
 {
 	// reserve a continous range of 4GB
+#if !BOOST_OS_WINDOWS
+	if (!memory_base)
+	{
+		for (size_t alignment : { (size_t)0x100000000, (size_t)0x10000000, (size_t)0x1000000 })
+		{
+			memory_base = memory_reserveAligned((size_t)0x100000000, alignment);
+			if (memory_base)
+				break;
+		}
+	}
+#endif
 	if(!memory_base)
 		memory_base = (uint8*)MemMapper::ReserveMemory(nullptr, (size_t)0x100000000, MemMapper::PAGE_PERMISSION::P_RW);
 	if( !memory_base )
