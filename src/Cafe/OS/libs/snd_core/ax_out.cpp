@@ -25,6 +25,7 @@ namespace snd_core
 		fwrite(&pcm, 2, 1, f); fwrite(&ch, 2, 1, f); fwrite(&rate, 4, 1, f); fwrite(&byteRate, 4, 1, f);
 		fwrite(&align, 2, 1, f); fwrite(&bits, 2, 1, f); fwrite("data", 1, 4, f); fwrite(&dataBytes, 4, 1, f);
 	}
+	bool AXOut_IsPadAudioActive() { return g_padAudio != nullptr; }
 	void AXOut_StartAudioDump(const std::string& path, uint32 seconds)
 	{
 		std::lock_guard lock(s_dumpMutex);
@@ -349,6 +350,9 @@ namespace snd_core
 				cemuLog_log(LogType::Force, "AXOut stereo fold rms FL={:.0f} FR={:.0f} SL={:.0f} SR={:.0f} FC={:.0f} LFE={:.0f}",
 					sqrt(s_energy[0] / n), sqrt(s_energy[1] / n), sqrt(s_energy[2] / n), sqrt(s_energy[3] / n), sqrt(s_energy[4] / n), sqrt(s_energy[5] / n));
 				for (auto& e : s_energy) e = 0;
+				extern double g_axDrcFoldEnergy; extern uint64 g_axDrcFoldSamples; extern float g_axDrcFoldGain;
+				cemuLog_log(LogType::Force, "AX DRC->TV fold: gain {:.2f} drc rms {:.0f}", g_axDrcFoldGain, g_axDrcFoldSamples ? sqrt(g_axDrcFoldEnergy * 65536.0 / g_axDrcFoldSamples) : 0.0);
+				g_axDrcFoldEnergy = 0; g_axDrcFoldSamples = 0;
 				extern uint32 g_axLpfStatVoices, g_axLpfStatOn, g_axBiquadStatOn; extern uint64 g_axLpfStatA0Sum; extern bool g_axLpfLegacy;
 				cemuLog_log(LogType::Force, "AX filters: voiceFrames {} lpfOn {} (avg a0 {}) biquadOn {} lpfMode {}", g_axLpfStatVoices, g_axLpfStatOn,
 					g_axLpfStatOn ? (uint32)(g_axLpfStatA0Sum / g_axLpfStatOn) : 0, g_axBiquadStatOn, g_axLpfLegacy ? "legacy" : "fixed");

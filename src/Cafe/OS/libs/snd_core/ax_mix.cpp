@@ -833,21 +833,23 @@ namespace snd_core
 
 	// ---- Thor voice tracer (<userdata>/trace_voices present): one log line per voice lifetime -------------
 	bool g_axVoiceTrace = false;
+	float g_axDrcFoldGain = 1.0f; // <userdata>/drc_fold_gain (float, 0 = off)
+	double g_axDrcFoldEnergy = 0; uint64 g_axDrcFoldSamples = 0;
 	struct VoiceTrace
 	{
 		uint64 firstFrame{}, lastFrame{};
 		uint32 frames{};
 		double rawE{}, outE{}; float outMax{};
 		uint32 startAddr{}; uint16 fmt{}; uint32 src{};
-		uint16 ve{}, veMax{}; uint32 tvMain{}, tvAux{}, drc{}; uint16 lpfA0{}; uint16 lpfOn{};
+		uint16 ve{}, veMax{}; uint32 tvMain{}, tvAux{}, drc{}, drcAux{}; uint16 lpfA0{}; uint16 lpfOn{};
 	};
 	static VoiceTrace s_vt[256];
 	static uint64 s_vtFrame = 0;
 	static void AXVoiceTrace_Emit(sint32 idx, VoiceTrace& t)
 	{
 		if (t.frames == 0) return;
-		cemuLog_log(LogType::Force, "VT v{:02} ago{:.2f} dur{}ms fmt{} src{:05x} addr{:08x} ve{:04x}/{:04x} tvMain{:05} tvAux{:05} drc{:05} lpf{}:{:04x} raw{:.0f} out{:.0f} outMax{:.0f}",
-			idx, (double)(s_vtFrame - t.firstFrame) * 0.003, t.frames * 3, t.fmt, t.src, t.startAddr, t.ve, t.veMax, t.tvMain, t.tvAux, t.drc, t.lpfOn, t.lpfA0,
+		cemuLog_log(LogType::Force, "VT v{:02} ago{:.2f} dur{}ms fmt{} src{:05x} addr{:08x} ve{:04x}/{:04x} tvMain{:05} tvAux{:05} drc{:05} drcAux{:05} lpf{}:{:04x} raw{:.0f} out{:.0f} outMax{:.0f}",
+			idx, (double)(s_vtFrame - t.firstFrame) * 0.003, t.frames * 3, t.fmt, t.src, t.startAddr, t.ve, t.veMax, t.tvMain, t.tvAux, t.drc, t.drcAux, t.lpfOn, t.lpfA0,
 			sqrt(t.rawE / t.frames), sqrt(t.outE / t.frames), t.outMax);
 		t = VoiceTrace{};
 	}
@@ -876,7 +878,7 @@ namespace snd_core
 			main = std::max<uint32>(main, _swapEndianU16(v->deviceMixTV[c * 4 + 0].vol));
 			for (int b = 1; b < 4; b++) aux = std::max<uint32>(aux, _swapEndianU16(v->deviceMixTV[c * 4 + b].vol));
 		}
-		for (int i = 0; i < AX_BUS_COUNT * AX_DRC_CHANNEL_COUNT * 2; i++) drc = std::max<uint32>(drc, _swapEndianU16(v->deviceMixDRC[i].vol));
+		for (int c = 0; c < AX_DRC_CHANNEL_COUNT; c++) { drc = std::max<uint32>(drc, _swapEndianU16(v->deviceMixDRC[c * 4 + 0].vol)); for (int b = 1; b < 4; b++) t.drcAux = std::max<uint32>(t.drcAux, _swapEndianU16(v->deviceMixDRC[c * 4 + b].vol)); }
 		t.tvMain = std::max(t.tvMain, main); t.tvAux = std::max(t.tvAux, aux); t.drc = std::max(t.drc, drc);
 		t.lpfOn = _swapEndianU16(v->lpf.on); if (t.lpfOn) t.lpfA0 = _swapEndianU16(v->lpf.a0);
 	}
@@ -1066,8 +1068,46 @@ namespace snd_core
 			AXAuxMix_StoreAuxSamples(tvInput, auxInput, sampleCount * AX_TV_CHANNEL_COUNT);
 		}
 
-		// DRC aux store
-		// todo
+		// DRC aux store (Thor: was a todo; BO2 sends player-local sounds through DRC aux)
+		for (sint32 auxBus = 0; auxBus < AX_AUX_BUS_COUNT; auxBus++)
+		{
+			sint32be* auxInput = AXAux_GetInputBuffer(AX_DEV_DRC, 0, auxBus);
+			if (auxInput == nullptr)
+				continue;
+			float* drcInput = __AXMixBufferDRC + (1 + auxBus) * (sampleCount * AX_DRC_CHANNEL_COUNT);
+			AXAuxMix_StoreAuxSamples(drcInput, auxInput, sampleCount * AX_DRC_CHANNEL_COUNT);
+		}
+		// DRC aux return into DRC main bus
+		for (sint32 auxBus = 0; auxBus < AX_AUX_BUS_COUNT; auxBus++)
+		{
+			sint32be* auxOutput = AXAux_GetOutputBuffer(AX_DEV_DRC, 0, auxBus);
+			if (auxOutput == nullptr)
+				continue;
+			uint16 auxReturnVolume = 0x8000;
+			AXAuxMix_MixProcessedAuxSamplesIntoOutput(auxOutput, __AXMixBufferDRC, sampleCount * AX_DRC_CHANNEL_COUNT, &auxReturnVolume, 0);
+		}
+		// Thor: no GamePad speaker. Games (BO2) route the GamePad player's own sounds - gunshots, nearby zombies -
+		// to the DRC. When no pad audio device is open, fold the DRC main bus into the TV main bus so it is heard.
+		{
+			extern bool AXOut_IsPadAudioActive();
+			if (!AXOut_IsPadAudioActive() && g_axDrcFoldGain > 0.0f)
+			{
+				float* drc = __AXMixBufferDRC;
+				float* tvL = __AXMixBufferTV;
+				float* tvR = __AXMixBufferTV + sampleCount;
+				const float g = g_axDrcFoldGain, gs = g * 0.7071f;
+				double e = 0;
+				for (size_t i = 0; i < sampleCount; i++)
+				{
+					float l = drc[i], r = drc[sampleCount + i], sl = drc[sampleCount * 2 + i], sr = drc[sampleCount * 3 + i];
+					tvL[i] += g * l + gs * sl;
+					tvR[i] += g * r + gs * sr;
+					e += (double)l * l + (double)r * r;
+				}
+				g_axDrcFoldEnergy += e / 65536.0;
+				g_axDrcFoldSamples += sampleCount * 2;
+			}
+		}
 
 		// merge main and aux buses
 		AXMix_mergeTVBuses();
