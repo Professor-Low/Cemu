@@ -758,7 +758,7 @@ namespace coreinit
 	static int s_thorFsDiagCount = 0;
 	static const char* _thorThreadName()
 	{
-		coreinit::OSThread_t* t = coreinit::OSGetCurrentThread();
+		OSThread_t* t = coreinit::OSGetCurrentThread();
 		return (t && t->threadName) ? t->threadName.GetPtr() : "?";
 	}
 	static void _thorCheckCmdBusy(const char* where, FSCmdBlockBody* body)
@@ -767,7 +767,7 @@ namespace coreinit
 		if ((st == FSA_CMD_STATUS_CODE_D900A22 || st == FSA_CMD_STATUS_CODE_D900A26) && s_thorFsDiagCount < 200)
 		{
 			s_thorFsDiagCount++;
-			coreinit::OSThread_t* t = coreinit::OSGetCurrentThread();
+			OSThread_t* t = coreinit::OSGetCurrentThread();
 			cemuLog_log(LogType::Force, "Thor FS: {} on BUSY cmdblock 0x{:08x} (status {:x}) thread '{}' 0x{:08x} core {}", where,
 				memory_getVirtualOffsetFromPointer(body), st, _thorThreadName(), memory_getVirtualOffsetFromPointer(t), PPCInterpreter_getCoreIndex(PPCInterpreter_getCurrentInstance()));
 		}
