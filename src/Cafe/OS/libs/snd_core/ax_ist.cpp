@@ -513,33 +513,37 @@ namespace snd_core
 		}
 		else
 		{
-			if (__AXDeviceUpsampleStage[AX_DEV_TV] == AX_UPSAMPLE_STAGE_BEFORE_FINALMIX)
+			// Thor: TV and DRC have independent upsample stages. Cemu used the TV stage for both, so a game with
+			// TV=before-finalmix / DRC=after-finalmix (BO2) never got its DRC final mix upsampled -> silent DRC.
+			if (__AXDeviceUpsampleStage[AX_DEV_TV] != AX_UPSAMPLE_STAGE_BEFORE_FINALMIX)
 			{
-				// final mix is 48KHz
-				// no need to copy since samples are already in right buffer
-			}
-			else
-			{
-				// final mix is 32KHz -> upsample
-				// TV
-				sint32 upsampledSampleCount;
 				if (__AXTVUpsampler.useLinearUpsampler || forceLinearUpsampler)
-				{
-					upsampledSampleCount = AXUpsampleLinear32To48(__AXTempFinalMixTVBuffer.GetPtr(), __AXTVBuffer48.GetPtr(), __AXTVUpsamplerSampleHistory, inputSampleCount, false, AX_TV_CHANNEL_COUNT);
-				}
+					AXUpsampleLinear32To48(__AXTempFinalMixTVBuffer.GetPtr(), __AXTVBuffer48.GetPtr(), __AXTVUpsamplerSampleHistory, inputSampleCount, false, AX_TV_CHANNEL_COUNT);
 				else
-				{
 					cemu_assert(false);
-				}
-				// DRC0
+			}
+			if (__AXDeviceUpsampleStage[AX_DEV_DRC] != AX_UPSAMPLE_STAGE_BEFORE_FINALMIX)
+			{
 				if (__AXDRCUpsampler[0].useLinearUpsampler || forceLinearUpsampler)
-				{
 					AXUpsampleLinear32To48(__AXTempFinalMixDRCBuffer.GetPtr(), __AXDRCBuffer48.GetPtr(), __AXDRC0UpsamplerSampleHistory, inputSampleCount, false, AX_DRC_CHANNEL_COUNT);
-				}
 				else
-				{
 					cemu_assert(false);
-				}
+			}
+		}
+		// Thor diag: DRC level before/after the game's final-mix callback (once per ~10s)
+		{
+			static uint32 s_fmFrames = 0; static double s_inE = 0, s_outE = 0;
+			const sint32* tmp = __AXTempFinalMixDRCBuffer.GetPtr();
+			for (sint32 i = 0; i < inputSampleCount * 2; i++) { double v = (double)_swapEndianS32(tmp[i]); s_outE += v * v; }
+			const sint32* in = __AXDRCOutputBuffer;
+			for (sint32 i = 0; i < inputSampleCount * 2; i++) { double v = (double)(_swapEndianS32(in[i]) >> 8); s_inE += v * v; }
+			if (++s_fmFrames % 3333 == 0)
+			{
+				double n = (double)inputSampleCount * 2 * 3333;
+				cemuLog_log(LogType::Force, "AX finalmix: renderer48 {} upsampleStage TV {} DRC {} cb TV {:08x} DRC {:08x} | DRC pre-cb rms {:.0f} post-cb rms {:.0f}",
+					isRenderer48, __AXDeviceUpsampleStage[AX_DEV_TV], __AXDeviceUpsampleStage[AX_DEV_DRC], __AXDeviceFinalMixCallback[AX_DEV_TV], __AXDeviceFinalMixCallback[AX_DEV_DRC],
+					sqrt(s_inE / n), sqrt(s_outE / n));
+				s_inE = s_outE = 0;
 			}
 		}
 	}
