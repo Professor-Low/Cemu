@@ -507,7 +507,7 @@ namespace snd_core
 
 		// Thor: add the GamePad-routed sends into the finished TV mix, scaled by the game's own TV final-mix gain
 		{
-			extern float g_axDrcSide[2][AX_SAMPLES_MAX]; extern sint32 g_axDrcSideN; extern double g_axTvAuxInE;
+			extern float g_axDrcSide[4][AX_SAMPLES_MAX]; extern sint32 g_axDrcSideN; extern double g_axTvAuxInE;
 			extern sint32 g_axDrcFoldMode; extern float g_axDrcFoldGain;
 			static double s_tvFinalE = 0, s_auxE = 0, s_sideE = 0; static float s_gain = 6.0f; static uint32 s_frames = 0;
 			// TV final mix L/R energy (game output, before our add)
@@ -518,7 +518,15 @@ namespace snd_core
 			{
 				sint32* tvR = tvL + n;
 				double fe = 0, se = 0;
-				for (sint32 i = 0; i < n; i++) { double a = _swapEndianS32(tvL[i]), b = _swapEndianS32(tvR[i]); fe += a * a + b * b; se += (double)g_axDrcSide[0][i] * g_axDrcSide[0][i] + (double)g_axDrcSide[1][i] * g_axDrcSide[1][i]; }
+				const bool tv6 = __AXMode[AX_DEV_TV] == AX_MODE_6CH;
+				sint32* tvSL = tvL + n * 2; sint32* tvSR = tvL + n * 3;
+				for (sint32 i = 0; i < n; i++)
+				{
+					double a = _swapEndianS32(tvL[i]), b = _swapEndianS32(tvR[i]);
+					if (tv6) { double c = _swapEndianS32(tvSL[i]), d = _swapEndianS32(tvSR[i]); a = a * a + c * c; b = b * b + d * d; } else { a *= a; b *= b; }
+					fe += a + b;
+					for (int c = 0; c < 4; c++) se += (double)g_axDrcSide[c][i] * g_axDrcSide[c][i];
+				}
 				s_tvFinalE += fe; s_auxE += g_axTvAuxInE; s_sideE += se; g_axTvAuxInE = 0;
 				if (g_axDrcFoldMode == 1 && g_axDrcFoldGain > 0.0f)
 				{
@@ -535,6 +543,11 @@ namespace snd_core
 					{
 						tvL[i] = _swapEndianS32((sint32)soft((float)_swapEndianS32(tvL[i]) + g * g_axDrcSide[0][i]));
 						tvR[i] = _swapEndianS32((sint32)soft((float)_swapEndianS32(tvR[i]) + g * g_axDrcSide[1][i]));
+						if (tv6)
+						{
+							tvSL[i] = _swapEndianS32((sint32)soft((float)_swapEndianS32(tvSL[i]) + g * g_axDrcSide[2][i]));
+							tvSR[i] = _swapEndianS32((sint32)soft((float)_swapEndianS32(tvSR[i]) + g * g_axDrcSide[3][i]));
+						}
 					}
 				}
 				if (++s_frames % 1111 == 0) // ~3.3s: re-estimate the game's TV final-mix gain (output rms / aux-send rms)

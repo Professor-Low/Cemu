@@ -842,7 +842,7 @@ namespace snd_core
 	sint32 g_axDrcFoldMode = 1; // <userdata>/drc_fold_mode: 0 off, 1 DRC sends -> TV final mix (default), 2/3 mix-level experiments, 4 DRC final output fold
 	// Thor: BO2 mutes its own DRC final mix, so the GamePad-routed voices (player gunfire body, nearby zombies) are
 	// captured here as a stereo downmix of the DRC aux sends and added after the TV final-mix callback (ax_ist.cpp).
-	float g_axDrcSide[2][AX_SAMPLES_MAX]; sint32 g_axDrcSideN = 0;
+	float g_axDrcSide[4][AX_SAMPLES_MAX]; sint32 g_axDrcSideN = 0;
 	double g_axTvAuxInE = 0;
 	double g_axDrcAuxInE[3] = {}, g_axDrcAuxOutE[3] = {}; bool g_axDrcAuxHasCb[3] = {}; uint32 g_axDrcDryUsed[3] = {}; uint64 g_axDrcMeterSamples = 0;
 	struct VoiceTrace
@@ -1110,17 +1110,38 @@ namespace snd_core
 				}
 			}
 			g_axDrcMeterSamples += busLen;
-			// stereo downmix of all DRC aux sends (s16 units)
-			for (size_t i = 0; i < sampleCount; i++)
+			// DRC aux sends (s16 units): front L/R in [0][1], rear SL/SR in [2][3] when the TV is 5.1 (rear cue applied
+			// at output), otherwise the old stereo downmix. Non-finite samples (one blown-up voice) are dropped.
 			{
-				float l = 0, r = 0;
-				for (sint32 auxBus = 0; auxBus < AX_AUX_BUS_COUNT; auxBus++)
+				extern bool g_axGameSurround;
+				const bool surround = g_axGameSurround && __AXMode[AX_DEV_TV] == AX_MODE_6CH;
+				static double s_chE[4] = {}; static uint32 s_chFrames = 0;
+				for (size_t i = 0; i < sampleCount; i++)
 				{
-					const float* b = __AXMixBufferDRC + (1 + auxBus) * busLen;
-					l += b[i] + 0.7071f * b[sampleCount * 2 + i];
-					r += b[sampleCount + i] + 0.7071f * b[sampleCount * 3 + i];
+					float c4[4] = {};
+					for (sint32 auxBus = 0; auxBus < AX_AUX_BUS_COUNT; auxBus++)
+					{
+						const float* b = __AXMixBufferDRC + (1 + auxBus) * busLen;
+						for (int c = 0; c < 4; c++) c4[c] += b[sampleCount * c + i];
+					}
+					for (int c = 0; c < 4; c++) { c4[c] /= 256.0f; if (!std::isfinite(c4[c]) || fabsf(c4[c]) > 1.0e6f) c4[c] = 0.0f; s_chE[c] += (double)c4[c] * c4[c]; }
+					if (surround)
+					{
+						g_axDrcSide[0][i] = c4[0]; g_axDrcSide[1][i] = c4[1]; g_axDrcSide[2][i] = c4[2]; g_axDrcSide[3][i] = c4[3];
+					}
+					else
+					{
+						g_axDrcSide[0][i] = c4[0] + 0.7071f * c4[2]; g_axDrcSide[1][i] = c4[1] + 0.7071f * c4[3];
+						g_axDrcSide[2][i] = 0.0f; g_axDrcSide[3][i] = 0.0f;
+					}
 				}
-				g_axDrcSide[0][i] = l / 256.0f; g_axDrcSide[1][i] = r / 256.0f;
+				if (++s_chFrames % 3333 == 0)
+				{
+					double n = (double)sampleCount * 3333.0;
+					cemuLog_log(LogType::Force, "AX DRC sends per channel (drcMode {}) rms L={:.0f} R={:.0f} SL={:.0f} SR={:.0f}", __AXMode[AX_DEV_DRC],
+						sqrt(s_chE[0] / n), sqrt(s_chE[1] / n), sqrt(s_chE[2] / n), sqrt(s_chE[3] / n));
+					for (auto& e : s_chE) e = 0;
+				}
 			}
 			g_axDrcSideN = (sint32)sampleCount;
 			// TV aux send level (L/R, s16 units) for matching the game's TV final-mix gain
@@ -1134,8 +1155,10 @@ namespace snd_core
 					{
 						const float* b = __AXMixBufferTV + (1 + auxBus) * tvBusLen;
 						l += b[i]; r += b[sampleCount + i];
+						if (__AXMode[AX_DEV_TV] == AX_MODE_6CH) { l += b[sampleCount * 2 + i]; r += b[sampleCount * 3 + i]; }
 					}
-					l /= 256.0f; r /= 256.0f; e += (double)l * l + (double)r * r;
+					l /= 256.0f; r /= 256.0f;
+					if (std::isfinite(l) && std::isfinite(r) && fabsf(l) < 1.0e6f && fabsf(r) < 1.0e6f) e += (double)l * l + (double)r * r;
 				}
 				g_axTvAuxInE += e;
 			}

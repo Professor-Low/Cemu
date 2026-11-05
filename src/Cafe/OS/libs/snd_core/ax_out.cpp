@@ -4,6 +4,7 @@
 #include "audio/IAudioAPI.h"
 //#include "ax.h"
 #include "config/CemuConfig.h"
+#include "config/ActiveSettings.h"
 #include "Cemu/Logging/CemuLogging.h"
 #include <cmath>
 #include <algorithm>
@@ -28,6 +29,18 @@ namespace snd_core
 	// Thor: treat the pad stream as inactive when it is muted (Android opens it at PadVolume 0 by default)
 	// Thor build: one physical speaker, so the DRC is always folded into the TV mix (drc_fold_gain 0 disables).
 	bool AXOut_IsPadAudioActive() { return false; }
+	// Thor: positional audio. A stereo TV makes BO2 mix plain L/R, so nothing tells you a zombie is BEHIND you.
+	// game_surround (default on; <userdata>/game_surround containing 0 disables, read at boot) reports a 5.1 TV and a
+	// surround GamePad to the game, which then pans voices front/back. AXOut folds 5.1 back to the stereo speaker and
+	// darkens the rear channels (head-shadow cue). <userdata>/rear_cue = 0..1 strength, live (default 1).
+	bool g_axGameSurround = true;
+	float g_axRearCue = 1.0f;
+	static void AXOut_ReadSurroundToggle()
+	{
+		g_axGameSurround = true;
+		if (FILE* f = fopen(_pathToUtf8(ActiveSettings::GetUserDataPath("game_surround")).c_str(), "rb")) { int v = 1; if (fscanf(f, "%d", &v) == 1) g_axGameSurround = v != 0; fclose(f); }
+		cemuLog_log(LogType::Force, "Thor: game surround (positional audio) {}", g_axGameSurround ? "ON" : "OFF");
+	}
 	void AXOut_StartAudioDump(const std::string& path, uint32 seconds)
 	{
 		std::lock_guard lock(s_dumpMutex);
@@ -85,6 +98,11 @@ namespace snd_core
 		// 1,2 -> stereo
 		// 3 -> surround
 		// 4 -> unknown mode
+		if (g_axGameSurround && GetConfig().tv_channels == kStereo)
+		{
+			*tvAudioMode = 3; // game mixes 5.1; AXOut_SubmitTVFrame folds it to the stereo device with a rear cue
+			return true;
+		}
 		switch (GetConfig().tv_channels)
 		{
 		case kMono:
@@ -103,6 +121,11 @@ namespace snd_core
 
 	bool AVMGetDRCSystemAudioMode(uint32be* drcAudioMode)
 	{
+		if (g_axGameSurround)
+		{
+			*drcAudioMode = 2; // Thor: surround GamePad -> BO2 pans pad-routed voices (nearby zombies) front/back too
+			return true;
+		}
 		*drcAudioMode = 1; // apparently the default is Stereo(?), MH3U exits if AXGetDeviceMode doesn't return 0 (DRCSystemAudioMode must return 1 to set DRC mode to 0)
 		return true;
 	}
@@ -194,6 +217,7 @@ namespace snd_core
 
 	void AXOut_Init()
 	{
+		AXOut_ReadSurroundToggle();
 		_AXOutInitDeviceModes();
 	}
 
@@ -276,7 +300,51 @@ namespace snd_core
 	void AXOut_SubmitTVFrame(sint32 frameIndex)
 	{
 		sint32 numSamples = AIGetSamplesPerChannel(AX_DEV_TV);
-		if (__AXMode[AX_DEV_TV] == AX_MODE_6CH)
+		const uint32 tvDevChannels = g_tvAudio ? g_tvAudio->GetChannels() : 2;
+		if (__AXMode[AX_DEV_TV] == AX_MODE_6CH && tvDevChannels == 2)
+		{
+			// Thor: game mixed 5.1 (AX order L R SL SR C LFE) for a stereo speaker. Rear channels get a high-shelf cut
+			// (~1.8 kHz, up to -12 dB) so sounds behind you are audibly darker than the same sound in front.
+			const sint32* in = __AXTVBuffer48.GetPtr();
+			sint16* dmaOutputBuffer = __AXTVDMABuffers[frameIndex];
+			static float s_lpL = 0, s_lpR = 0;
+			static uint32 s_diag = 0; static double s_e[6] = {};
+			const float cue = std::clamp(g_axRearCue, 0.0f, 1.0f);
+			const float a = 0.21f; // one-pole, fc ~1.8 kHz @ 48 kHz
+			const float hi = 1.0f - 0.75f * cue; // high-frequency gain kept on rear channels
+			const float rg = 0.7071f + 0.15f * cue; // rear level (a little up to make up for the lost highs)
+			auto soft = [](float v) -> float {
+				const float knee = 24000.0f, room = 32767.0f - knee;
+				float m = fabsf(v);
+				if (m <= knee) return v;
+				float o = knee + room * (m - knee) / (m - knee + room);
+				return v < 0 ? -o : o;
+			};
+			for (sint32 i = 0; i < numSamples; i++)
+			{
+				float ch[6];
+				for (int c = 0; c < 6; c++) { float v = (float)_swapEndianS32(in[numSamples * c + i]); ch[c] = std::isfinite(v) ? v : 0.0f; s_e[c] += (double)ch[c] * ch[c]; }
+				s_lpL += a * (ch[2] - s_lpL); s_lpR += a * (ch[3] - s_lpR);
+				if (!std::isfinite(s_lpL)) s_lpL = 0; if (!std::isfinite(s_lpR)) s_lpR = 0;
+				const float rl = rg * (s_lpL + hi * (ch[2] - s_lpL));
+				const float rr = rg * (s_lpR + hi * (ch[3] - s_lpR));
+				const float fl = ch[0] + 0.7071f * ch[4] + 0.5f * ch[5] + rl;
+				const float fr = ch[1] + 0.7071f * ch[4] + 0.5f * ch[5] + rr;
+				dmaOutputBuffer[0] = _swapEndianS16((sint16)std::clamp((sint32)soft(fl), -32768, 32767));
+				dmaOutputBuffer[1] = _swapEndianS16((sint16)std::clamp((sint32)soft(fr), -32768, 32767));
+				dmaOutputBuffer += 2;
+			}
+			if (++s_diag % 3333 == 0)
+			{
+				double n = (double)numSamples * 3333.0;
+				cemuLog_log(LogType::Force, "AXOut 5.1->stereo (rear cue {:.2f}) rms FL={:.0f} FR={:.0f} SL={:.0f} SR={:.0f} FC={:.0f} LFE={:.0f}", cue,
+					sqrt(s_e[0] / n), sqrt(s_e[1] / n), sqrt(s_e[2] / n), sqrt(s_e[3] / n), sqrt(s_e[4] / n), sqrt(s_e[5] / n));
+				for (auto& e : s_e) e = 0;
+			}
+			AXOut_DumpFrame(__AXTVDMABuffers[frameIndex], numSamples);
+			AIInitDMA(__AXTVDMABuffers[frameIndex], numSamples * 2 * sizeof(sint16));
+		}
+		else if (__AXMode[AX_DEV_TV] == AX_MODE_6CH)
 		{
 			sint32* inputChannel0 = __AXTVBuffer48.GetPtr() + numSamples * 0;
 			sint32* inputChannel1 = __AXTVBuffer48.GetPtr() + numSamples * 1;

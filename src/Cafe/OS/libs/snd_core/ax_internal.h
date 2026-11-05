@@ -218,6 +218,7 @@ namespace snd_core
 	void AXAux_incrementBufferIndex();
 
 	// internal mix buffers
+	extern sint32 __AXMode[AX_DEV_COUNT];
 	extern SysAllocator<sint32, AX_SAMPLES_MAX * AX_TV_CHANNEL_COUNT> __AXTVOutputBuffer;
 	extern SysAllocator<sint32, AX_SAMPLES_MAX * AX_DRC_CHANNEL_COUNT * 2> __AXDRCOutputBuffer;
 
