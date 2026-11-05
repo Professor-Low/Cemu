@@ -4,6 +4,9 @@
 #include "audio/IAudioAPI.h"
 //#include "ax.h"
 #include "config/CemuConfig.h"
+#include "Cemu/Logging/CemuLogging.h"
+#include <cmath>
+#include <algorithm>
 
 namespace snd_core
 {
@@ -267,17 +270,43 @@ namespace snd_core
 		}
 		else if (__AXMode[AX_DEV_TV] == AX_MODE_STEREO)
 		{
-			sint32* inputChannel0 = __AXTVBuffer48.GetPtr() + numSamples * 0;
-			sint32* inputChannel1 = __AXTVBuffer48.GetPtr() + numSamples * 1;
+			// Thor: games (e.g. BO2) still route voices to the surround/center buses even when the TV is stereo.
+			// Real AX folds those into L/R; Cemu used to drop them (no gunshots / zombie audio). Fold them unless
+			// a game-supplied remix matrix already produced the stereo output.
+			extern bool g_axTVRemixApplied;
+			sint32* in = __AXTVBuffer48.GetPtr();
 			sint16* dmaOutputBuffer = __AXTVDMABuffers[frameIndex];
+			const bool fold = !g_axTVRemixApplied;
+			static uint32 s_diagFrames = 0;
+			static double s_energy[6] = {};
 			for (sint32 i = 0; i < numSamples; i++)
 			{
-				dmaOutputBuffer[0] = _swapEndianS16((sint16)std::min(std::max(_swapEndianS32(*inputChannel0), -32768), 32767));
-				dmaOutputBuffer[1] = _swapEndianS16((sint16)std::min(std::max(_swapEndianS32(*inputChannel1), -32768), 32767));
+				float fl = (float)_swapEndianS32(in[i]);
+				float fr = (float)_swapEndianS32(in[numSamples + i]);
+				if (fold)
+				{
+					float sl = (float)_swapEndianS32(in[numSamples * 2 + i]);
+					float sr = (float)_swapEndianS32(in[numSamples * 3 + i]);
+					float fc = (float)_swapEndianS32(in[numSamples * 4 + i]);
+					float lfe = (float)_swapEndianS32(in[numSamples * 5 + i]);
+					if (s_diagFrames < 0xFFFFFFF0)
+					{
+						s_energy[0] += fl * fl; s_energy[1] += fr * fr; s_energy[2] += sl * sl;
+						s_energy[3] += sr * sr; s_energy[4] += fc * fc; s_energy[5] += lfe * lfe;
+					}
+					fl += 0.7071f * (fc + sl) + 0.5f * lfe;
+					fr += 0.7071f * (fc + sr) + 0.5f * lfe;
+				}
+				dmaOutputBuffer[0] = _swapEndianS16((sint16)std::clamp((sint32)fl, -32768, 32767));
+				dmaOutputBuffer[1] = _swapEndianS16((sint16)std::clamp((sint32)fr, -32768, 32767));
 				dmaOutputBuffer += 2;
-				// next sample
-				inputChannel0++;
-				inputChannel1++;
+			}
+			if (fold && ++s_diagFrames % 3333 == 0) // ~10s of 3ms frames
+			{
+				double n = (double)numSamples * 3333.0;
+				cemuLog_log(LogType::Force, "AXOut stereo fold rms FL={:.0f} FR={:.0f} SL={:.0f} SR={:.0f} FC={:.0f} LFE={:.0f}",
+					sqrt(s_energy[0] / n), sqrt(s_energy[1] / n), sqrt(s_energy[2] / n), sqrt(s_energy[3] / n), sqrt(s_energy[4] / n), sqrt(s_energy[5] / n));
+				for (auto& e : s_energy) e = 0;
 			}
 			AIInitDMA(__AXTVDMABuffers[frameIndex], numSamples * 2 * sizeof(sint16)); // 2ch output
 		}

@@ -935,9 +935,12 @@ namespace snd_core
 		}
 	}
 	
+	bool g_axTVRemixApplied = false; // Thor: set when a game remix matrix already produced the TV output channels this frame
+
 	void AXIst_HandleDeviceRemix()
 	{
 		extern SysAllocator<AXRemixMatrices_t, 12> g_remix_matrices;
+		g_axTVRemixApplied = false;
 		extern sint32 __AXOutTVOutputChannelCount;
 		extern sint32 __AXOutDRCOutputChannelCount;
 
@@ -948,6 +951,7 @@ namespace snd_core
 			if(entry.deviceEntry[0].channelIn == __AXFinalMixCBStructTV->numChannelInput && entry.deviceEntry[0].channelOut == __AXOutTVOutputChannelCount && !entry.deviceEntry[0].matrix.IsNull())
 			{
 				AXIst_ApplyDeviceRemix((sint32be*)__AXTVBuffer48.GetPtr(), entry.deviceEntry[0].matrix.GetPtr(), __AXFinalMixCBStructTV->numChannelInput, __AXOutTVOutputChannelCount, AX_SAMPLES_PER_3MS_48KHZ);
+				g_axTVRemixApplied = true;
 				break;
 			}
 		}
