@@ -754,8 +754,28 @@ namespace coreinit
 
 	/* FS commands */
 
+	// Thor diagnostics: detect cmd blocks that are re-used/re-initialised while a command is still queued or in flight
+	static int s_thorFsDiagCount = 0;
+	static const char* _thorThreadName()
+	{
+		coreinit::OSThread_t* t = coreinit::OSGetCurrentThread();
+		return (t && t->threadName) ? t->threadName.GetPtr() : "?";
+	}
+	static void _thorCheckCmdBusy(const char* where, FSCmdBlockBody* body)
+	{
+		uint32 st = _swapEndianU32(body->statusCode);
+		if ((st == FSA_CMD_STATUS_CODE_D900A22 || st == FSA_CMD_STATUS_CODE_D900A26) && s_thorFsDiagCount < 200)
+		{
+			s_thorFsDiagCount++;
+			coreinit::OSThread_t* t = coreinit::OSGetCurrentThread();
+			cemuLog_log(LogType::Force, "Thor FS: {} on BUSY cmdblock 0x{:08x} (status {:x}) thread '{}' 0x{:08x} core {}", where,
+				memory_getVirtualOffsetFromPointer(body), st, _thorThreadName(), memory_getVirtualOffsetFromPointer(t), PPCInterpreter_getCoreIndex(PPCInterpreter_getCurrentInstance()));
+		}
+	}
+
 	void FSInitCmdBlock(FSCmdBlock_t* fsCmdBlock)
 	{
+		_thorCheckCmdBusy("FSInitCmdBlock", __FSGetCmdBlockBody(fsCmdBlock));
 		memset(fsCmdBlock, 0x00, sizeof(FSCmdBlock_t));
 		FSCmdBlockBody* fsCmdBlockBody = __FSGetCmdBlockBody(fsCmdBlock);
 		fsCmdBlockBody->statusCode = _swapEndianU32(FSA_CMD_STATUS_CODE_D900A21);
@@ -767,6 +787,7 @@ namespace coreinit
 		if (fsClient == nullptr || fsCmdBlock == nullptr || asyncParams == nullptr)
 			assert_dbg();
 		FSCmdBlockBody* fsCmdBlockBody = __FSGetCmdBlockBody(fsCmdBlock);
+		_thorCheckCmdBusy("AsyncToSyncInit", fsCmdBlockBody);
 		coreinit::OSInitMessageQueue(&fsCmdBlockBody->syncTaskMsgQueue, fsCmdBlockBody->_syncTaskMsg, 1);
 		asyncParams->userCallback = nullptr;
 		asyncParams->userContext = nullptr;
@@ -1105,7 +1126,13 @@ namespace coreinit
 		StackAllocator<FSAsyncParams, 1> asyncParams;
 		__FSAsyncToSyncInit(fsClient, fsCmdBlock, &asyncParams);
 		sint32 fsAsyncRet = FSReadFileAsync(fsClient, fsCmdBlock, dst, size, count, fileHandle, flag, errorMask, asyncParams.GetPointer());
-		return __FSProcessAsyncResult(fsClient, fsCmdBlock, fsAsyncRet, errorMask);
+		sint32 r = __FSProcessAsyncResult(fsClient, fsCmdBlock, fsAsyncRet, errorMask);
+		if (r != (sint32)count && s_thorFsDiagCount < 200)
+		{
+			s_thorFsDiagCount++;
+			cemuLog_log(LogType::Force, "Thor FS: FSReadFile short/err ret {} want {}x{} handle 0x{:x} cmd 0x{:08x} thread '{}'", r, count, size, fileHandle, memory_getVirtualOffsetFromPointer(fsCmdBlock), _thorThreadName());
+		}
+		return r;
 	}
 
 	sint32 FSReadFileWithPosAsync(FSClient_t* fsClient, FSCmdBlock_t* fsCmdBlock, void* dst, uint32 size, uint32 count, uint32 filePos, uint32 fileHandle, uint32 flag, uint32 errorMask, FSAsyncParams* fsAsyncParams)
@@ -1274,7 +1301,13 @@ namespace coreinit
 		StackAllocator<FSAsyncParams, 1> asyncParams;
 		__FSAsyncToSyncInit(fsClient, fsCmdBlock, &asyncParams);
 		sint32 fsAsyncRet = FSGetPosFileAsync(fsClient, fsCmdBlock, fileHandle, returnedFilePos, errorMask, asyncParams.GetPointer());
-		return __FSProcessAsyncResult(fsClient, fsCmdBlock, fsAsyncRet, errorMask);
+		sint32 r = __FSProcessAsyncResult(fsClient, fsCmdBlock, fsAsyncRet, errorMask);
+		if (r < 0 && s_thorFsDiagCount < 200)
+		{
+			s_thorFsDiagCount++;
+			cemuLog_log(LogType::Force, "Thor FS: FSGetPosFile err {} handle 0x{:x} thread '{}'", r, fileHandle, _thorThreadName());
+		}
+		return r;
 	}
 
 	FSA_RESULT __FSPrepareCmd_OpenDir(iosu::fsa::FSAShimBuffer* fsaShimBuffer, IOSDevHandle fsaHandle, char* path)
@@ -1873,7 +1906,13 @@ namespace coreinit
 		StackAllocator<FSAsyncParams, 1> asyncParams;
 		__FSAsyncToSyncInit(fsClient, fsCmdBlock, &asyncParams);
 		sint32 fsAsyncRet = FSGetStatFileAsync(fsClient, fsCmdBlock, fileHandle, statOut, errorMask, &asyncParams);
-		return __FSProcessAsyncResult(fsClient, fsCmdBlock, fsAsyncRet, errorMask);
+		sint32 r = __FSProcessAsyncResult(fsClient, fsCmdBlock, fsAsyncRet, errorMask);
+		if (r < 0 && s_thorFsDiagCount < 200)
+		{
+			s_thorFsDiagCount++;
+			cemuLog_log(LogType::Force, "Thor FS: FSGetStatFile err {} handle 0x{:x} thread '{}'", r, (uint32)fileHandle, _thorThreadName());
+		}
+		return r;
 	}
 
 	sint32 FSGetFreeSpaceSizeAsync(FSClient_t* fsClient, FSCmdBlock_t* fsCmdBlock, const char* path, FSLargeSize* returnedFreeSize, uint32 errorMask, FSAsyncParams* fsAsyncParams)
