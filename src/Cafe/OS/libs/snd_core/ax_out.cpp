@@ -553,7 +553,7 @@ namespace snd_core
 			}
 			AIInitDRCDMA(__AXDRCDMABuffers[frameIndex], numSamples * 6 * sizeof(sint16)); // 6ch output
 		}
-		else if (__AXMode[AX_DEV_DRC] == AX_MODE_STEREO)
+		else if (__AXMode[AX_DEV_DRC] == AX_MODE_STEREO || __AXMode[AX_DEV_DRC] == AX_MODE_SURROUND || __AXMode[AX_DEV_DRC] == AX_MODE_DPL2) // Thor: DRC "surround" is still a 2ch stream (rear lives in the aux sends)
 		{
 			sint32* inputChannel0 = __AXDRCBuffer48.GetPtr() + numSamples * 0;
 			sint32* inputChannel1 = __AXDRCBuffer48.GetPtr() + numSamples * 1;
