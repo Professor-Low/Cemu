@@ -509,7 +509,7 @@ namespace snd_core
 		{
 			extern float g_axDrcSide[2][AX_SAMPLES_MAX]; extern sint32 g_axDrcSideN; extern double g_axTvAuxInE;
 			extern sint32 g_axDrcFoldMode; extern float g_axDrcFoldGain;
-			static double s_tvFinalE = 0, s_auxE = 0, s_sideE = 0; static float s_gain = 4.0f; static uint32 s_frames = 0;
+			static double s_tvFinalE = 0, s_auxE = 0, s_sideE = 0; static float s_gain = 6.0f; static uint32 s_frames = 0;
 			// TV final mix L/R energy (game output, before our add)
 			const bool tvAt32 = !isRenderer48 && __AXDeviceUpsampleStage[AX_DEV_TV] != AX_UPSAMPLE_STAGE_BEFORE_FINALMIX;
 			sint32* tvL = tvAt32 || isRenderer48 ? __AXTempFinalMixTVBuffer.GetPtr() : nullptr;
@@ -531,8 +531,10 @@ namespace snd_core
 				}
 				if (++s_frames % 1111 == 0) // ~3.3s: re-estimate the game's TV final-mix gain (output rms / aux-send rms)
 				{
-					if (s_auxE > 1e6)
-						s_gain = std::clamp(s_gain * 0.5f + 0.5f * (float)sqrt(s_tvFinalE / s_auxE), 1.0f, 16.0f);
+					// only learn from real gameplay (TV sends rms > 60); clamp so menus/death screens can't spike the gain
+					const double auxRms = sqrt(s_auxE / (n * 2.0 * 1111));
+					if (auxRms > 60.0)
+						s_gain = std::clamp(s_gain * 0.7f + 0.3f * (float)sqrt(s_tvFinalE / s_auxE), 3.0f, 10.0f);
 					if (s_frames % 3333 == 0)
 						cemuLog_log(LogType::Force, "AX DRC sends->TV: mode {} tvGain est {:.2f} x user {:.2f} | tvFinal rms {:.0f} tvAuxSend rms {:.0f} drcSend rms {:.0f}",
 							g_axDrcFoldMode, s_gain, g_axDrcFoldGain, sqrt(s_tvFinalE / (n * 2.0 * 1111)), sqrt(s_auxE / (n * 2.0 * 1111)), sqrt(s_sideE / (n * 2.0 * 1111)));
