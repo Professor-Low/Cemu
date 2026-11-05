@@ -758,7 +758,10 @@ void GraphicPack2::NotifyModuleLoaded(const RPLModule* rpl)
 	std::lock_guard<std::recursive_mutex> lock(mtx_patches);
 	list_modules.emplace_back(rpl);
 
-	// todo - iterate all active graphic packs and apply any matching patch groups
+	// Thor: apply patches of already-active graphic packs to modules loaded after title start (OSDynLoad'ed RPLs,
+	// e.g. BO2's t6mp_cafef_rpl). Previously this was a todo, so patches targeting late-loaded RPLs never applied.
+	for (auto& gp : GetActiveGraphicPacks())
+		gp->ApplyPatchesForModule(rpl);
 }
 
 void GraphicPack2::NotifyModuleUnloaded(const RPLModule* rpl)
