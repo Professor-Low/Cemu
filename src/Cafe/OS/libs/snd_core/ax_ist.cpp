@@ -522,11 +522,19 @@ namespace snd_core
 				s_tvFinalE += fe; s_auxE += g_axTvAuxInE; s_sideE += se; g_axTvAuxInE = 0;
 				if (g_axDrcFoldMode == 1 && g_axDrcFoldGain > 0.0f)
 				{
-					const float g = s_gain * g_axDrcFoldGain;
+					const float g = s_gain * 0.75f * g_axDrcFoldGain;
+					// soft knee above 24000 so the louder combined mix never hard-clips (asymptote 32767)
+					auto soft = [](float v) -> float {
+						const float knee = 24000.0f, room = 32767.0f - knee;
+						float a = fabsf(v);
+						if (a <= knee) return v;
+						float o = knee + room * (a - knee) / (a - knee + room);
+						return v < 0 ? -o : o;
+					};
 					for (sint32 i = 0; i < n; i++)
 					{
-						tvL[i] = _swapEndianS32((sint32)std::clamp((float)_swapEndianS32(tvL[i]) + g * g_axDrcSide[0][i], -8388608.0f, 8388607.0f));
-						tvR[i] = _swapEndianS32((sint32)std::clamp((float)_swapEndianS32(tvR[i]) + g * g_axDrcSide[1][i], -8388608.0f, 8388607.0f));
+						tvL[i] = _swapEndianS32((sint32)soft((float)_swapEndianS32(tvL[i]) + g * g_axDrcSide[0][i]));
+						tvR[i] = _swapEndianS32((sint32)soft((float)_swapEndianS32(tvR[i]) + g * g_axDrcSide[1][i]));
 					}
 				}
 				if (++s_frames % 1111 == 0) // ~3.3s: re-estimate the game's TV final-mix gain (output rms / aux-send rms)
