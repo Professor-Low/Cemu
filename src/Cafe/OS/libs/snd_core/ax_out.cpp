@@ -353,6 +353,16 @@ namespace snd_core
 				extern double g_axDrcFoldEnergy; extern uint64 g_axDrcFoldSamples; extern float g_axDrcFoldGain;
 				cemuLog_log(LogType::Force, "AX DRC->TV fold: gain {:.2f} drc rms {:.0f}", g_axDrcFoldGain, g_axDrcFoldSamples ? sqrt(g_axDrcFoldEnergy * 65536.0 / g_axDrcFoldSamples) : 0.0);
 				g_axDrcFoldEnergy = 0; g_axDrcFoldSamples = 0;
+				extern double g_axDrcAuxInE[3], g_axDrcAuxOutE[3]; extern bool g_axDrcAuxHasCb[3]; extern uint32 g_axDrcDryUsed[3]; extern uint64 g_axDrcMeterSamples; extern sint32 g_axDrcFoldMode;
+				{
+					double n = g_axDrcMeterSamples ? (double)g_axDrcMeterSamples : 1.0;
+					cemuLog_log(LogType::Force, "AX DRC aux mode {}: A cb{} in {:.0f} out {:.0f} dry{} | B cb{} in {:.0f} out {:.0f} dry{} | C cb{} in {:.0f} out {:.0f} dry{}", g_axDrcFoldMode,
+						g_axDrcAuxHasCb[0], sqrt(g_axDrcAuxInE[0] * 65536.0 / n), sqrt(g_axDrcAuxOutE[0] * 65536.0 / n), g_axDrcDryUsed[0],
+						g_axDrcAuxHasCb[1], sqrt(g_axDrcAuxInE[1] * 65536.0 / n), sqrt(g_axDrcAuxOutE[1] * 65536.0 / n), g_axDrcDryUsed[1],
+						g_axDrcAuxHasCb[2], sqrt(g_axDrcAuxInE[2] * 65536.0 / n), sqrt(g_axDrcAuxOutE[2] * 65536.0 / n), g_axDrcDryUsed[2]);
+					for (int i = 0; i < 3; i++) { g_axDrcAuxInE[i] = 0; g_axDrcAuxOutE[i] = 0; g_axDrcDryUsed[i] = 0; }
+					g_axDrcMeterSamples = 0;
+				}
 				extern uint32 g_axLpfStatVoices, g_axLpfStatOn, g_axBiquadStatOn; extern uint64 g_axLpfStatA0Sum; extern bool g_axLpfLegacy;
 				cemuLog_log(LogType::Force, "AX filters: voiceFrames {} lpfOn {} (avg a0 {}) biquadOn {} lpfMode {}", g_axLpfStatVoices, g_axLpfStatOn,
 					g_axLpfStatOn ? (uint32)(g_axLpfStatA0Sum / g_axLpfStatOn) : 0, g_axBiquadStatOn, g_axLpfLegacy ? "legacy" : "fixed");

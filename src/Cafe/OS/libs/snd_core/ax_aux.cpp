@@ -1,6 +1,7 @@
 #include "Cafe/OS/libs/snd_core/ax.h"
 #include "Cafe/OS/libs/snd_core/ax_internal.h"
 #include "Cafe/HW/Espresso/PPCState.h"
+#include "Cemu/Logging/CemuLogging.h"
 
 namespace snd_core
 {
@@ -145,6 +146,7 @@ namespace snd_core
 			return r;
 		if (auxBusIndex >= AX_AUX_BUS_COUNT)
 			return -5;
+		cemuLog_log(LogType::Force, "AXRegisterAuxCallback dev {} idx {} bus {} func {:08x}", device, deviceIndex, auxBusIndex, funcMPTR);
 		if (device == AX_DEV_TV)
 		{
 			__AXAuxTVCallbackFunc[auxBusIndex] = funcMPTR;

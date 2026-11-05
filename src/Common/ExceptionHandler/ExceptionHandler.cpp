@@ -193,7 +193,7 @@ void ExceptionHandler_DumpAllThreads()
 	CrashLog_WriteLine("== end of thread dump");
 }
 
-namespace snd_core { extern bool g_axLpfLegacy; extern bool g_axVoiceTrace; extern float g_axDrcFoldGain; void AXOut_StartAudioDump(const std::string& path, uint32 seconds); }
+namespace snd_core { extern bool g_axLpfLegacy; extern bool g_axVoiceTrace; extern float g_axDrcFoldGain; extern sint32 g_axDrcFoldMode; void AXOut_StartAudioDump(const std::string& path, uint32 seconds); }
 static void ThorDiag_WatchThread()
 {
 	while (true)
@@ -222,6 +222,11 @@ static void ThorDiag_WatchThread()
 				float gain = 1.0f;
 				if (FILE* f = fopen(_pathToUtf8(ActiveSettings::GetUserDataPath("drc_fold_gain")).c_str(), "rb")) { float v; if (fscanf(f, "%f", &v) == 1 && v >= 0.0f && v <= 8.0f) gain = v; fclose(f); }
 				if (gain != sc::g_axDrcFoldGain) { sc::g_axDrcFoldGain = gain; cemuLog_log(LogType::Force, "Thor: DRC->TV fold gain {:.2f}", gain); }
+			}
+			{
+				sint32 mode = 3;
+				if (FILE* f = fopen(_pathToUtf8(ActiveSettings::GetUserDataPath("drc_fold_mode")).c_str(), "rb")) { int v; if (fscanf(f, "%d", &v) == 1 && v >= 0 && v <= 3) mode = v; fclose(f); }
+				if (mode != sc::g_axDrcFoldMode) { sc::g_axDrcFoldMode = mode; cemuLog_log(LogType::Force, "Thor: DRC fold mode {}", mode); }
 			}
 			fs::path at = ActiveSettings::GetUserDataPath("dump_audio");
 			if (fs::exists(at, ec))

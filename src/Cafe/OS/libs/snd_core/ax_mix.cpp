@@ -835,6 +835,8 @@ namespace snd_core
 	bool g_axVoiceTrace = false;
 	float g_axDrcFoldGain = 1.0f; // <userdata>/drc_fold_gain (float, 0 = off)
 	double g_axDrcFoldEnergy = 0; uint64 g_axDrcFoldSamples = 0;
+	sint32 g_axDrcFoldMode = 3; // <userdata>/drc_fold_mode: 0 off, 1 processed aux only, 2 dry sends only, 3 auto
+	double g_axDrcAuxInE[3] = {}, g_axDrcAuxOutE[3] = {}; bool g_axDrcAuxHasCb[3] = {}; uint32 g_axDrcDryUsed[3] = {}; uint64 g_axDrcMeterSamples = 0;
 	struct VoiceTrace
 	{
 		uint64 firstFrame{}, lastFrame{};
@@ -1068,29 +1070,44 @@ namespace snd_core
 			AXAuxMix_StoreAuxSamples(tvInput, auxInput, sampleCount * AX_TV_CHANNEL_COUNT);
 		}
 
-		// DRC aux store (Thor: was a todo; BO2 sends player-local sounds through DRC aux)
-		for (sint32 auxBus = 0; auxBus < AX_AUX_BUS_COUNT; auxBus++)
+		// DRC aux store/return (Thor: was a todo; BO2 sends the GamePad player's own sounds through DRC aux).
+		// Meters + fallback: if a bus has no callback or its callback returns silence, its dry send is folded instead.
 		{
-			sint32be* auxInput = AXAux_GetInputBuffer(AX_DEV_DRC, 0, auxBus);
-			if (auxInput == nullptr)
-				continue;
-			float* drcInput = __AXMixBufferDRC + (1 + auxBus) * (sampleCount * AX_DRC_CHANNEL_COUNT);
-			AXAuxMix_StoreAuxSamples(drcInput, auxInput, sampleCount * AX_DRC_CHANNEL_COUNT);
-		}
-		// DRC aux return into DRC main bus
-		for (sint32 auxBus = 0; auxBus < AX_AUX_BUS_COUNT; auxBus++)
-		{
-			sint32be* auxOutput = AXAux_GetOutputBuffer(AX_DEV_DRC, 0, auxBus);
-			if (auxOutput == nullptr)
-				continue;
-			uint16 auxReturnVolume = 0x8000;
-			AXAuxMix_MixProcessedAuxSamplesIntoOutput(auxOutput, __AXMixBufferDRC, sampleCount * AX_DRC_CHANNEL_COUNT, &auxReturnVolume, 0);
+			const size_t busLen = sampleCount * AX_DRC_CHANNEL_COUNT;
+			static float s_outEma[AX_AUX_BUS_COUNT] = {};
+			for (sint32 auxBus = 0; auxBus < AX_AUX_BUS_COUNT; auxBus++)
+			{
+				float* drcBus = __AXMixBufferDRC + (1 + auxBus) * busLen;
+				double inE = 0; for (size_t i = 0; i < busLen; i++) inE += (double)drcBus[i] * drcBus[i];
+				g_axDrcAuxInE[auxBus] += inE / 65536.0;
+				sint32be* auxInput = AXAux_GetInputBuffer(AX_DEV_DRC, 0, auxBus);
+				g_axDrcAuxHasCb[auxBus] = auxInput != nullptr;
+				if (auxInput)
+					AXAuxMix_StoreAuxSamples(drcBus, auxInput, (sint32)busLen);
+				double outE = 0;
+				if (sint32be* auxOutput = AXAux_GetOutputBuffer(AX_DEV_DRC, 0, auxBus))
+				{
+					for (size_t i = 0; i < busLen; i++) { double v = (double)(((sint32)auxOutput[i]) << 8); outE += v * v; }
+					uint16 auxReturnVolume = 0x8000;
+					if (g_axDrcFoldMode != 2)
+						AXAuxMix_MixProcessedAuxSamplesIntoOutput(auxOutput, __AXMixBufferDRC, (sint32)busLen, &auxReturnVolume, 0);
+				}
+				g_axDrcAuxOutE[auxBus] += outE / 65536.0;
+				s_outEma[auxBus] = s_outEma[auxBus] * 0.99f + (float)(outE / (double)busLen) * 0.01f;
+				const bool useDry = g_axDrcFoldMode == 2 || (g_axDrcFoldMode == 3 && s_outEma[auxBus] < 1.0f);
+				if (useDry && inE > 0.0)
+				{
+					for (size_t i = 0; i < busLen; i++) __AXMixBufferDRC[i] += drcBus[i];
+					g_axDrcDryUsed[auxBus]++;
+				}
+			}
+			g_axDrcMeterSamples += busLen;
 		}
 		// Thor: no GamePad speaker. Games (BO2) route the GamePad player's own sounds - gunshots, nearby zombies -
 		// to the DRC. When no pad audio device is open, fold the DRC main bus into the TV main bus so it is heard.
 		{
 			extern bool AXOut_IsPadAudioActive();
-			if (!AXOut_IsPadAudioActive() && g_axDrcFoldGain > 0.0f)
+			if (!AXOut_IsPadAudioActive() && g_axDrcFoldGain > 0.0f && g_axDrcFoldMode != 0)
 			{
 				float* drc = __AXMixBufferDRC;
 				float* tvL = __AXMixBufferTV;
