@@ -287,11 +287,16 @@ namespace snd_core
 			return -5;
 		if( device == AX_DEV_TV )
 		{ 
+			if (__AXTVAuxReturnVolume[auxBus] != volume)
+				cemuLog_log(LogType::Force, "AXSetAuxReturnVolume TV bus {} -> {:04x}", auxBus, volume);
 			__AXTVAuxReturnVolume[auxBus] = volume;
 		}
-		else
+		else if (device == AX_DEV_DRC && deviceIndex == 0)
 		{
-			cemuLog_logDebug(LogType::Force, "sndcore2.AXSetAuxReturnVolume() - unsupported device {}", device);
+			extern uint16 g_axDrcAuxReturnVolume[3];
+			if (g_axDrcAuxReturnVolume[auxBus] != volume)
+				cemuLog_log(LogType::Force, "AXSetAuxReturnVolume DRC bus {} -> {:04x}", auxBus, volume);
+			g_axDrcAuxReturnVolume[auxBus] = volume;
 		}
 		return 0;
 	}

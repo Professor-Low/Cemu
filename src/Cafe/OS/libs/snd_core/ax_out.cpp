@@ -36,6 +36,13 @@ namespace snd_core
 		if (!s_dumpFile) return;
 		AXOut_WriteWavHeader(s_dumpFile, 0);
 		s_dumpSamplesLeft = seconds * 48000; s_dumpSamplesWritten = 0;
+		{
+			extern FILE* g_axDrcDumpFile; extern uint32 g_axDrcDumpLeft, g_axDrcDumpWritten;
+			if (g_axDrcDumpFile) fclose(g_axDrcDumpFile);
+			std::string p2 = path.substr(0, path.size() - 4) + "_drc32k.raw";
+			g_axDrcDumpFile = fopen(p2.c_str(), "wb");
+			g_axDrcDumpLeft = seconds * 32000; g_axDrcDumpWritten = 0;
+		}
 		cemuLog_log(LogType::Force, "Thor: audio dump started ({}s) -> {}", seconds, path);
 	}
 	static void AXOut_DumpFrame(const sint16* bigEndianStereo, sint32 numSamples)
@@ -51,6 +58,8 @@ namespace snd_core
 		{
 			AXOut_WriteWavHeader(s_dumpFile, s_dumpSamplesWritten);
 			fclose(s_dumpFile); s_dumpFile = nullptr;
+			extern FILE* g_axDrcDumpFile;
+			if (g_axDrcDumpFile) { fclose(g_axDrcDumpFile); g_axDrcDumpFile = nullptr; }
 			cemuLog_log(LogType::Force, "Thor: audio dump finished ({} frames)", s_dumpSamplesWritten);
 		}
 	}

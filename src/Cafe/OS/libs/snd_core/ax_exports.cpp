@@ -143,6 +143,16 @@ namespace snd_core
 		osLib_returnFromFunction(hCPU, r);
 	}
 
+
+	sint32 AXSetDeviceVolume(uint32 device, uint32 deviceIndex, uint16 volume)
+	{
+		extern uint16 g_axDrcDeviceVolume;
+		cemuLog_log(LogType::Force, "AXSetDeviceVolume dev {} idx {} vol {:04x}", device, deviceIndex, volume);
+		if (device == AX_DEV_DRC && deviceIndex == 0)
+			g_axDrcDeviceVolume = volume;
+		return 0;
+	}
+
 	void export_AXRegisterAuxCallback(PPCInterpreter_t* hCPU)
 	{
 		cemuLog_log(LogType::SoundAPI, "AXRegisterAuxCallback(0x{:08x},0x{:08x},0x{:08x},0x{:08x},0x{:08x}) LR {:08x}", hCPU->gpr[3], hCPU->gpr[4], hCPU->gpr[5], hCPU->gpr[6], hCPU->gpr[7], hCPU->spr.LR);
@@ -618,6 +628,7 @@ namespace snd_core
 			osLib_addFunction("snd_core", "AXRegisterCallback", export_AXRegisterCallback);
 
 			osLib_addFunction("snd_core", "AXRegisterAuxCallback", export_AXRegisterAuxCallback);
+			cafeExportRegister("snd_core", AXSetDeviceVolume, LogType::SoundAPI);
 			osLib_addFunction("snd_core", "AXGetAuxCallback", export_AXGetAuxCallback);
 
 			osLib_addFunction("snd_core", "AXSetAuxReturnVolume", export_AXSetAuxReturnVolume);
@@ -693,6 +704,7 @@ namespace snd_core
 			osLib_addFunction("sndcore2", "AXRegisterCallback", export_AXRegisterCallback);
 
 			osLib_addFunction("sndcore2", "AXRegisterAuxCallback", export_AXRegisterAuxCallback);
+			cafeExportRegister("sndcore2", AXSetDeviceVolume, LogType::SoundAPI);
 			osLib_addFunction("sndcore2", "AXGetAuxCallback", export_AXGetAuxCallback);
 
 			osLib_addFunction("sndcore2", "AXSetAuxReturnVolume", export_AXSetAuxReturnVolume);

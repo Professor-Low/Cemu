@@ -3,6 +3,7 @@
 #include "Cafe/HW/MMU/MMU.h"
 #include "config/ActiveSettings.h"
 #include <algorithm>
+#include <cstdio>
 
 void mic_updateOnAXFrame();
 
@@ -835,6 +836,9 @@ namespace snd_core
 	bool g_axVoiceTrace = false;
 	float g_axDrcFoldGain = 1.0f; // <userdata>/drc_fold_gain (float, 0 = off)
 	double g_axDrcFoldEnergy = 0; uint64 g_axDrcFoldSamples = 0;
+	uint16 g_axDrcAuxReturnVolume[3] = { 0x8000, 0x8000, 0x8000 };
+	uint16 g_axDrcDeviceVolume = 0x8000;
+	FILE* g_axDrcDumpFile = nullptr; uint32 g_axDrcDumpLeft = 0, g_axDrcDumpWritten = 0;
 	sint32 g_axDrcFoldMode = 3; // <userdata>/drc_fold_mode: 0 off, 1 processed aux only, 2 dry sends only, 3 auto
 	double g_axDrcAuxInE[3] = {}, g_axDrcAuxOutE[3] = {}; bool g_axDrcAuxHasCb[3] = {}; uint32 g_axDrcDryUsed[3] = {}; uint64 g_axDrcMeterSamples = 0;
 	struct VoiceTrace
@@ -1088,7 +1092,7 @@ namespace snd_core
 				if (sint32be* auxOutput = AXAux_GetOutputBuffer(AX_DEV_DRC, 0, auxBus))
 				{
 					for (size_t i = 0; i < busLen; i++) { double v = (double)(((sint32)auxOutput[i]) << 8); outE += v * v; }
-					uint16 auxReturnVolume = 0x8000;
+					uint16 auxReturnVolume = g_axDrcAuxReturnVolume[auxBus];
 					if (g_axDrcFoldMode != 2)
 						AXAuxMix_MixProcessedAuxSamplesIntoOutput(auxOutput, __AXMixBufferDRC, (sint32)busLen, &auxReturnVolume, 0);
 				}
@@ -1112,17 +1116,26 @@ namespace snd_core
 				float* drc = __AXMixBufferDRC;
 				float* tvL = __AXMixBufferTV;
 				float* tvR = __AXMixBufferTV + sampleCount;
-				const float g = g_axDrcFoldGain, gs = g * 0.7071f;
+				const float g = g_axDrcFoldGain * ((float)g_axDrcDeviceVolume / 32768.0f) * ((float)__AXDRCMasterVolume / 32768.0f), gs = g * 0.7071f;
 				double e = 0;
+				sint16 dumpBuf[2 * AX_SAMPLES_MAX];
 				for (size_t i = 0; i < sampleCount; i++)
 				{
 					float l = drc[i], r = drc[sampleCount + i], sl = drc[sampleCount * 2 + i], sr = drc[sampleCount * 3 + i];
-					tvL[i] += g * l + gs * sl;
-					tvR[i] += g * r + gs * sr;
-					e += (double)l * l + (double)r * r;
+					float addL = g * l + gs * sl, addR = g * r + gs * sr;
+					tvL[i] += addL;
+					tvR[i] += addR;
+					e += (double)addL * addL + (double)addR * addR;
+					dumpBuf[i * 2 + 0] = (sint16)std::clamp(addL / 256.0f, -32768.0f, 32767.0f);
+					dumpBuf[i * 2 + 1] = (sint16)std::clamp(addR / 256.0f, -32768.0f, 32767.0f);
 				}
 				g_axDrcFoldEnergy += e / 65536.0;
 				g_axDrcFoldSamples += sampleCount * 2;
+				if (g_axDrcDumpFile && g_axDrcDumpLeft)
+				{
+					uint32 n = std::min<uint32>((uint32)sampleCount, g_axDrcDumpLeft);
+					fwrite(dumpBuf, 4, n, g_axDrcDumpFile); g_axDrcDumpLeft -= n; g_axDrcDumpWritten += n;
+				}
 			}
 		}
 
