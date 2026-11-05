@@ -224,7 +224,7 @@ static void ThorDiag_WatchThread()
 				if (gain != sc::g_axDrcFoldGain) { sc::g_axDrcFoldGain = gain; cemuLog_log(LogType::Force, "Thor: DRC->TV fold gain {:.2f}", gain); }
 			}
 			{
-				sint32 mode = 3;
+				sint32 mode = 1;
 				if (FILE* f = fopen(_pathToUtf8(ActiveSettings::GetUserDataPath("drc_fold_mode")).c_str(), "rb")) { int v; if (fscanf(f, "%d", &v) == 1 && v >= 0 && v <= 3) mode = v; fclose(f); }
 				if (mode != sc::g_axDrcFoldMode) { sc::g_axDrcFoldMode = mode; cemuLog_log(LogType::Force, "Thor: DRC fold mode {}", mode); }
 			}

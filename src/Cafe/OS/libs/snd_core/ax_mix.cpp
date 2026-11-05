@@ -839,7 +839,7 @@ namespace snd_core
 	uint16 g_axDrcAuxReturnVolume[3] = { 0x8000, 0x8000, 0x8000 };
 	uint16 g_axDrcDeviceVolume = 0x8000;
 	FILE* g_axDrcDumpFile = nullptr; uint32 g_axDrcDumpLeft = 0, g_axDrcDumpWritten = 0;
-	sint32 g_axDrcFoldMode = 3; // <userdata>/drc_fold_mode: 0 off, 1 processed aux only, 2 dry sends only, 3 auto
+	sint32 g_axDrcFoldMode = 1; // <userdata>/drc_fold_mode: 0 off, 1 fold DRC final output (default), 2/3 experimental mix-level folds
 	double g_axDrcAuxInE[3] = {}, g_axDrcAuxOutE[3] = {}; bool g_axDrcAuxHasCb[3] = {}; uint32 g_axDrcDryUsed[3] = {}; uint64 g_axDrcMeterSamples = 0;
 	struct VoiceTrace
 	{
@@ -1111,7 +1111,7 @@ namespace snd_core
 		// to the DRC. When no pad audio device is open, fold the DRC main bus into the TV main bus so it is heard.
 		{
 			extern bool AXOut_IsPadAudioActive();
-			if (!AXOut_IsPadAudioActive() && g_axDrcFoldGain > 0.0f && g_axDrcFoldMode != 0)
+			if (!AXOut_IsPadAudioActive() && g_axDrcFoldGain > 0.0f && g_axDrcFoldMode >= 2)
 			{
 				float* drc = __AXMixBufferDRC;
 				float* tvL = __AXMixBufferTV;
@@ -1131,11 +1131,7 @@ namespace snd_core
 				}
 				g_axDrcFoldEnergy += e / 65536.0;
 				g_axDrcFoldSamples += sampleCount * 2;
-				if (g_axDrcDumpFile && g_axDrcDumpLeft)
-				{
-					uint32 n = std::min<uint32>((uint32)sampleCount, g_axDrcDumpLeft);
-					fwrite(dumpBuf, 4, n, g_axDrcDumpFile); g_axDrcDumpLeft -= n; g_axDrcDumpWritten += n;
-				}
+
 			}
 		}
 

@@ -39,9 +39,9 @@ namespace snd_core
 		{
 			extern FILE* g_axDrcDumpFile; extern uint32 g_axDrcDumpLeft, g_axDrcDumpWritten;
 			if (g_axDrcDumpFile) fclose(g_axDrcDumpFile);
-			std::string p2 = path.substr(0, path.size() - 4) + "_drc32k.raw";
+			std::string p2 = path.substr(0, path.size() - 4) + "_drc48k.raw";
 			g_axDrcDumpFile = fopen(p2.c_str(), "wb");
-			g_axDrcDumpLeft = seconds * 32000; g_axDrcDumpWritten = 0;
+			g_axDrcDumpLeft = seconds * 48000; g_axDrcDumpWritten = 0;
 		}
 		cemuLog_log(LogType::Force, "Thor: audio dump started ({}s) -> {}", seconds, path);
 	}
@@ -333,6 +333,16 @@ namespace snd_core
 			const bool fold = !g_axTVRemixApplied;
 			static uint32 s_diagFrames = 0;
 			static double s_energy[6] = {};
+			// Thor: fold the game's finished GamePad (DRC) mix into the speaker output. BO2 plays the local player's
+			// gunfire and nearby zombies on the GamePad speaker (DRCVS); the Thor has one speaker and no pad stream.
+			extern float g_axDrcFoldGain; extern sint32 g_axDrcFoldMode;
+			extern FILE* g_axDrcDumpFile; extern uint32 g_axDrcDumpLeft, g_axDrcDumpWritten;
+			static double s_drcFoldE = 0; static uint64 s_drcFoldN = 0;
+			const sint32 drcN = AIGetSamplesPerChannel(AX_DEV_DRC);
+			const bool foldDrc = g_axDrcFoldMode == 1 && g_axDrcFoldGain > 0.0f && !AXOut_IsPadAudioActive() && drcN == numSamples;
+			const sint32* drcIn = __AXDRCBuffer48.GetPtr();
+			const bool drcMono = __AXMode[AX_DEV_DRC] == AX_MODE_MONO;
+			sint16 drcDump[2 * 1024];
 			for (sint32 i = 0; i < numSamples; i++)
 			{
 				float fl = (float)_swapEndianS32(in[i]);
@@ -351,9 +361,26 @@ namespace snd_core
 					fl += 0.7071f * (fc + sl) + 0.5f * lfe;
 					fr += 0.7071f * (fc + sr) + 0.5f * lfe;
 				}
+				if (foldDrc)
+				{
+					float dl = (float)_swapEndianS32(drcIn[i]) * g_axDrcFoldGain;
+					float dr = drcMono ? dl : (float)_swapEndianS32(drcIn[numSamples + i]) * g_axDrcFoldGain;
+					fl += dl; fr += dr;
+					s_drcFoldE += (double)dl * dl + (double)dr * dr; s_drcFoldN += 2;
+					if (i < 1024) { drcDump[i * 2] = (sint16)std::clamp((sint32)dl, -32768, 32767); drcDump[i * 2 + 1] = (sint16)std::clamp((sint32)dr, -32768, 32767); }
+				}
 				dmaOutputBuffer[0] = _swapEndianS16((sint16)std::clamp((sint32)fl, -32768, 32767));
 				dmaOutputBuffer[1] = _swapEndianS16((sint16)std::clamp((sint32)fr, -32768, 32767));
 				dmaOutputBuffer += 2;
+			}
+			if (foldDrc && g_axDrcDumpFile && g_axDrcDumpLeft)
+			{
+				std::lock_guard lock(s_dumpMutex);
+				if (g_axDrcDumpFile)
+				{
+					uint32 n = std::min<uint32>((uint32)std::min(numSamples, 1024), g_axDrcDumpLeft);
+					fwrite(drcDump, 4, n, g_axDrcDumpFile); g_axDrcDumpLeft -= n; g_axDrcDumpWritten += n;
+				}
 			}
 			if (fold && ++s_diagFrames % 3333 == 0) // ~10s of 3ms frames
 			{
@@ -362,7 +389,8 @@ namespace snd_core
 					sqrt(s_energy[0] / n), sqrt(s_energy[1] / n), sqrt(s_energy[2] / n), sqrt(s_energy[3] / n), sqrt(s_energy[4] / n), sqrt(s_energy[5] / n));
 				for (auto& e : s_energy) e = 0;
 				extern double g_axDrcFoldEnergy; extern uint64 g_axDrcFoldSamples; extern float g_axDrcFoldGain;
-				cemuLog_log(LogType::Force, "AX DRC->TV fold: padStream {} padVol {} gain {:.2f} drc rms {:.0f}", g_padAudio ? 1 : 0, g_padVolume.load(), g_axDrcFoldGain, g_axDrcFoldSamples ? sqrt(g_axDrcFoldEnergy * 65536.0 / g_axDrcFoldSamples) : 0.0);
+				cemuLog_log(LogType::Force, "AX DRC final->speaker fold: mode {} gain {:.2f} drcN {} tvN {} folded rms {:.0f}", g_axDrcFoldMode, g_axDrcFoldGain, drcN, numSamples, s_drcFoldN ? sqrt(s_drcFoldE / s_drcFoldN) : 0.0);
+				s_drcFoldE = 0; s_drcFoldN = 0;
 				g_axDrcFoldEnergy = 0; g_axDrcFoldSamples = 0;
 				extern double g_axDrcAuxInE[3], g_axDrcAuxOutE[3]; extern bool g_axDrcAuxHasCb[3]; extern uint32 g_axDrcDryUsed[3]; extern uint64 g_axDrcMeterSamples; extern sint32 g_axDrcFoldMode;
 				{
