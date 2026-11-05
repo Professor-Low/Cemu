@@ -26,7 +26,8 @@ namespace snd_core
 		fwrite(&align, 2, 1, f); fwrite(&bits, 2, 1, f); fwrite("data", 1, 4, f); fwrite(&dataBytes, 4, 1, f);
 	}
 	// Thor: treat the pad stream as inactive when it is muted (Android opens it at PadVolume 0 by default)
-	bool AXOut_IsPadAudioActive() { return g_padAudio != nullptr && g_padVolume.load() > 0; }
+	// Thor build: one physical speaker, so the DRC is always folded into the TV mix (drc_fold_gain 0 disables).
+	bool AXOut_IsPadAudioActive() { return false; }
 	void AXOut_StartAudioDump(const std::string& path, uint32 seconds)
 	{
 		std::lock_guard lock(s_dumpMutex);
@@ -352,7 +353,7 @@ namespace snd_core
 					sqrt(s_energy[0] / n), sqrt(s_energy[1] / n), sqrt(s_energy[2] / n), sqrt(s_energy[3] / n), sqrt(s_energy[4] / n), sqrt(s_energy[5] / n));
 				for (auto& e : s_energy) e = 0;
 				extern double g_axDrcFoldEnergy; extern uint64 g_axDrcFoldSamples; extern float g_axDrcFoldGain;
-				cemuLog_log(LogType::Force, "AX DRC->TV fold: gain {:.2f} drc rms {:.0f}", g_axDrcFoldGain, g_axDrcFoldSamples ? sqrt(g_axDrcFoldEnergy * 65536.0 / g_axDrcFoldSamples) : 0.0);
+				cemuLog_log(LogType::Force, "AX DRC->TV fold: padStream {} padVol {} gain {:.2f} drc rms {:.0f}", g_padAudio ? 1 : 0, g_padVolume.load(), g_axDrcFoldGain, g_axDrcFoldSamples ? sqrt(g_axDrcFoldEnergy * 65536.0 / g_axDrcFoldSamples) : 0.0);
 				g_axDrcFoldEnergy = 0; g_axDrcFoldSamples = 0;
 				extern double g_axDrcAuxInE[3], g_axDrcAuxOutE[3]; extern bool g_axDrcAuxHasCb[3]; extern uint32 g_axDrcDryUsed[3]; extern uint64 g_axDrcMeterSamples; extern sint32 g_axDrcFoldMode;
 				{
