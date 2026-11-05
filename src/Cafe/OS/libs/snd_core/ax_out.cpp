@@ -121,7 +121,7 @@ namespace snd_core
 
 	bool AVMGetDRCSystemAudioMode(uint32be* drcAudioMode)
 	{
-		if (g_axGameSurround)
+		if (false) // Thor: keep the GamePad stereo (known-good gunshot path); positional cue comes from the 5.1 TV mix
 		{
 			*drcAudioMode = 2; // Thor: surround GamePad -> BO2 pans pad-routed voices (nearby zombies) front/back too
 			return true;

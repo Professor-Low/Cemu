@@ -1125,11 +1125,9 @@ namespace snd_core
 						for (int c = 0; c < 4; c++) c4[c] += b[sampleCount * c + i];
 					}
 					for (int c = 0; c < 4; c++) { c4[c] /= 256.0f; if (!std::isfinite(c4[c]) || fabsf(c4[c]) > 1.0e6f) c4[c] = 0.0f; s_chE[c] += (double)c4[c] * c4[c]; }
-					if (surround)
-					{
-						g_axDrcSide[0][i] = c4[0]; g_axDrcSide[1][i] = c4[1]; g_axDrcSide[2][i] = c4[2]; g_axDrcSide[3][i] = c4[3];
-					}
-					else
+					// BO2 only ever fills DRC slots 2/3 (slots 0/1 measured exactly 0 in-match, any facing), so they are a fixed
+					// layout, NOT rear. Always fold them to the FRONT, else gunshot body + nearest zombies get the rear muffle.
+					(void)surround;
 					{
 						g_axDrcSide[0][i] = c4[0] + 0.7071f * c4[2]; g_axDrcSide[1][i] = c4[1] + 0.7071f * c4[3];
 						g_axDrcSide[2][i] = 0.0f; g_axDrcSide[3][i] = 0.0f;
