@@ -5,6 +5,10 @@
 #include "Cafe/CafeSystem.h"
 #include "Cafe/Filesystem/fsc.h"
 #include <pugixml.hpp>
+#include "config/ActiveSettings.h"
+#include "Cafe/HW/MMU/MMU.h"
+#include "Cafe/HW/Espresso/PPCState.h"
+#include <fstream>
 
 namespace coreinit
 {
@@ -545,6 +549,52 @@ namespace coreinit
 
 	std::mutex sCafeConsoleMutex;
 	
+	// Thor diagnostics (BO2 t6mp v0): on "sound bank failed" (and once on reaching the menu, as a good baseline)
+	// dump the SND bank slots + shared TOC entry table so the corruption can be diffed offline.
+	static void ThorDumpBo2SoundBanks(const char* tag)
+	{
+		auto rd32 = [](uint32 a) -> uint32 { return memory_isAddressRangeAccessible(a, 4) ? _swapEndianU32(*(uint32*)memory_getPointerFromVirtualOffset(a)) : 0; };
+		const uint32 insLis = rd32(0x0264f164), insAddi = rd32(0x0264f16c);
+		if ((insLis >> 26) != 15 || (insAddi >> 26) != 14)
+			return; // not t6mp v0
+		const uint32 base = ((insLis & 0xFFFF) << 16) + (uint32)(sint32)(sint16)(insAddi & 0xFFFF);
+		std::ofstream f(ActiveSettings::GetUserDataPath("bankdump_{}.bin", tag), std::ios::binary | std::ios::trunc);
+		auto put = [&](uint32 addr, uint32 len) {
+			if (!memory_isAddressRangeAccessible(addr, len)) return;
+			uint32 hdr[2] = { addr, len };
+			f.write((const char*)hdr, 8);
+			f.write((const char*)memory_getPointerFromVirtualOffset(addr), len);
+		};
+		const uint32 slots = base + 0x50818;
+		put(slots, 32 * 4);
+		uint32 maxEnd = 0;
+		for (uint32 i = 0; i < 32; i++)
+		{
+			uint32 b = rd32(slots + i * 4);
+			if (b < 0x10000000 || b >= 0x50000000) continue;
+			put(b, 0x1300);
+			uint32 nameP = rd32(b);
+			if (nameP >= 0x10000000 && nameP < 0x50000000) put(nameP, 64);
+			for (uint32 o : { 0x20u, 0x942u })
+			{
+				uint32 idx = rd32(b + o + 0x80c), cnt = rd32(b + o + 0x20);
+				if (idx != 0xFFFFFFFF && idx < 0x10000 && cnt < 0x10000) maxEnd = std::max(maxEnd, idx + cnt);
+			}
+		}
+		put(base, std::min<uint32>(std::max<uint32>(maxEnd + 128, 256) * 0x14, 0x50000));
+		PPCInterpreter_t* h = PPCInterpreter_getCurrentInstance();
+		if (h)
+		{
+			uint32 regs[34];
+			for (int i = 0; i < 32; i++) regs[i] = h->gpr[i];
+			regs[32] = h->instructionPointer; regs[33] = h->spr.LR;
+			uint32 hdr[2] = { 0xFFFFFFFF, sizeof(regs) };
+			f.write((const char*)hdr, 8); f.write((const char*)regs, sizeof(regs));
+			put(h->gpr[1], 0x400);
+		}
+		cemuLog_log(LogType::Force, "Thor: BO2 sound bank dump '{}' written (table base 0x{:08x}, maxEnd {})", tag, base, maxEnd);
+	}
+
 	void WriteCafeConsole(CafeLogType cafeLogType, const char* msg, sint32 len)
 	{
 		std::unique_lock _l(sCafeConsoleMutex);
@@ -552,7 +602,17 @@ namespace coreinit
 		// once a line is full or \n is written it will be posted to log
 		auto flushLine = [](CafeLogBuffer& cafeLogBuffer, std::string_view cafeLogName) -> void
 		{
-			cemuLog_log(LogType::CoreinitLogging, "[{0}] {1}", cafeLogName, std::basic_string_view(cafeLogBuffer.lineBuffer.data(), cafeLogBuffer.lineLength));
+			std::string_view line(cafeLogBuffer.lineBuffer.data(), cafeLogBuffer.lineLength);
+			cemuLog_log(LogType::CoreinitLogging, "[{0}] {1}", cafeLogName, line);
+			static int s_bankDumps = 0;
+			static bool s_menuDump = false;
+			if (line.find("sound bank failed to load") != std::string_view::npos && s_bankDumps < 3)
+				ThorDumpBo2SoundBanks(fmt::format("fail{}", s_bankDumps++).c_str());
+			else if (!s_menuDump && line.find("LIVE LOGON: Finished") != std::string_view::npos)
+			{
+				s_menuDump = true;
+				ThorDumpBo2SoundBanks("menu");
+			}
 			cafeLogBuffer.lineLength = 0;
 		};
 
