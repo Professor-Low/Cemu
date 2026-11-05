@@ -1064,6 +1064,19 @@ namespace snd_core
 		memset(__AXMixBufferDRC, 0, sizeof(__AXMixBufferDRC));
 
 		AXMix_ProcessVoices(internalShadowCopyHead);
+		{ // Thor diag: TV bus per-channel energy straight from the voice mixer (main + aux A/B/C), before game final mix
+			static double s_be[4][6] = {}; static uint32 s_bn = 0;
+			const size_t sc = AXGetInputSamplesPerFrame();
+			for (int bus = 0; bus < 4; bus++) for (int c = 0; c < 6; c++) { const float* q = __AXMixBufferTV + (bus * 6 + c) * sc; double e = 0; for (size_t i = 0; i < sc; i++) e += (double)q[i] * q[i]; s_be[bus][c] += e; }
+			if (++s_bn % 3333 == 0)
+			{
+				const double n = (double)sc * 3333.0 * 65536.0;
+				for (int bus = 0; bus < 4; bus++)
+					cemuLog_log(LogType::Force, "Thor TV voice bus{} rms L={:.0f} R={:.0f} SL={:.0f} SR={:.0f} C={:.0f} LFE={:.0f}", bus,
+						sqrt(s_be[bus][0] / n), sqrt(s_be[bus][1] / n), sqrt(s_be[bus][2] / n), sqrt(s_be[bus][3] / n), sqrt(s_be[bus][4] / n), sqrt(s_be[bus][5] / n));
+				memset(s_be, 0, sizeof(s_be));
+			}
+		}
 		AXAux_Process(); // apply AUX effects to previous frame
 		AXIst_HandleFrameCallbacks();
 

@@ -252,6 +252,11 @@ namespace snd_core
 			return -1;
 		}
 		auto matrices = g_remix_matrices.GetPtr();
+		{ // Thor diag: dump every remix matrix the game registers
+			std::string m; const float32be* mp = matrix.GetPtr();
+			if (mp) for (uint32 k = 0; k < inputChannelCount * outputChannelCount && k < 36; k++) m += fmt::format("{:.2f} ", (float)mp[k]);
+			cemuLog_log(LogType::Force, "Thor remix matrix dev{} in{} out{}: {}", deviceId, inputChannelCount, outputChannelCount, m);
+		}
 
 		// test if we already have an entry and just need to update the matrix data
 		for (uint32 i = 0; i < g_remix_matrices.GetCount(); ++i)
@@ -1008,6 +1013,19 @@ namespace snd_core
 		extern sint32 __AXOutTVOutputChannelCount;
 		extern sint32 __AXOutDRCOutputChannelCount;
 
+		{ // Thor diag: TV per-channel energy after the game's final-mix callback, before any remix
+			static double s_pe[6] = {}; static uint32 s_pn = 0;
+			const sint32be* b = (const sint32be*)__AXTVBuffer48.GetPtr();
+			const sint32 nch = std::min<sint32>(6, __AXFinalMixCBStructTV->numChannelInput);
+			for (sint32 c = 0; c < nch; c++) for (sint32 i = 0; i < AX_SAMPLES_PER_3MS_48KHZ; i++) { double v = (double)(sint32)b[c * AX_SAMPLES_PER_3MS_48KHZ + i]; s_pe[c] += v * v; }
+			if (++s_pn % 3333 == 0)
+			{
+				double n = AX_SAMPLES_PER_3MS_48KHZ * 3333.0;
+				cemuLog_log(LogType::Force, "Thor TV pre-remix (cbIn {} cbOut {} outCh {}) rms L={:.0f} R={:.0f} SL={:.0f} SR={:.0f} C={:.0f} LFE={:.0f}", (int)__AXFinalMixCBStructTV->numChannelInput, (int)__AXFinalMixCBStructTV->numChannelOutput, __AXOutTVOutputChannelCount,
+					sqrt(s_pe[0] / n), sqrt(s_pe[1] / n), sqrt(s_pe[2] / n), sqrt(s_pe[3] / n), sqrt(s_pe[4] / n), sqrt(s_pe[5] / n));
+				for (auto& e : s_pe) e = 0;
+			}
+		}
 		// tv remix matrix
 		for(uint32 i = 0; i < g_remix_matrices.GetCount(); ++i)
 		{
