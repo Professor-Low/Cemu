@@ -25,7 +25,8 @@ namespace snd_core
 		fwrite(&pcm, 2, 1, f); fwrite(&ch, 2, 1, f); fwrite(&rate, 4, 1, f); fwrite(&byteRate, 4, 1, f);
 		fwrite(&align, 2, 1, f); fwrite(&bits, 2, 1, f); fwrite("data", 1, 4, f); fwrite(&dataBytes, 4, 1, f);
 	}
-	bool AXOut_IsPadAudioActive() { return g_padAudio != nullptr; }
+	// Thor: treat the pad stream as inactive when it is muted (Android opens it at PadVolume 0 by default)
+	bool AXOut_IsPadAudioActive() { return g_padAudio != nullptr && g_padVolume.load() > 0; }
 	void AXOut_StartAudioDump(const std::string& path, uint32 seconds)
 	{
 		std::lock_guard lock(s_dumpMutex);
