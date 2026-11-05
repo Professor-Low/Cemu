@@ -7,9 +7,51 @@
 #include "Cemu/Logging/CemuLogging.h"
 #include <cmath>
 #include <algorithm>
+#include <mutex>
+#include <cstdio>
 
 namespace snd_core
 {
+	// Thor: <userdata>/dump_audio (content = seconds, default 20) records the final stereo TV mix to audio_dump.wav
+	static FILE* s_dumpFile = nullptr;
+	static uint32 s_dumpSamplesLeft = 0, s_dumpSamplesWritten = 0;
+	static std::mutex s_dumpMutex;
+	static void AXOut_WriteWavHeader(FILE* f, uint32 frames)
+	{
+		uint32 dataBytes = frames * 4, riff = 36 + dataBytes, rate = 48000, byteRate = 48000 * 4, fmtLen = 16;
+		uint16 pcm = 1, ch = 2, align = 4, bits = 16;
+		fseek(f, 0, SEEK_SET);
+		fwrite("RIFF", 1, 4, f); fwrite(&riff, 4, 1, f); fwrite("WAVEfmt ", 1, 8, f); fwrite(&fmtLen, 4, 1, f);
+		fwrite(&pcm, 2, 1, f); fwrite(&ch, 2, 1, f); fwrite(&rate, 4, 1, f); fwrite(&byteRate, 4, 1, f);
+		fwrite(&align, 2, 1, f); fwrite(&bits, 2, 1, f); fwrite("data", 1, 4, f); fwrite(&dataBytes, 4, 1, f);
+	}
+	void AXOut_StartAudioDump(const std::string& path, uint32 seconds)
+	{
+		std::lock_guard lock(s_dumpMutex);
+		if (s_dumpFile) { AXOut_WriteWavHeader(s_dumpFile, s_dumpSamplesWritten); fclose(s_dumpFile); }
+		s_dumpFile = fopen(path.c_str(), "wb");
+		if (!s_dumpFile) return;
+		AXOut_WriteWavHeader(s_dumpFile, 0);
+		s_dumpSamplesLeft = seconds * 48000; s_dumpSamplesWritten = 0;
+		cemuLog_log(LogType::Force, "Thor: audio dump started ({}s) -> {}", seconds, path);
+	}
+	static void AXOut_DumpFrame(const sint16* bigEndianStereo, sint32 numSamples)
+	{
+		std::lock_guard lock(s_dumpMutex);
+		if (!s_dumpFile) return;
+		sint16 tmp[2 * 1024];
+		sint32 n = std::min<sint32>(numSamples, std::min<uint32>(1024, s_dumpSamplesLeft));
+		for (sint32 i = 0; i < n * 2; i++) tmp[i] = _swapEndianS16(bigEndianStereo[i]);
+		fwrite(tmp, 4, n, s_dumpFile);
+		s_dumpSamplesLeft -= n; s_dumpSamplesWritten += n;
+		if (s_dumpSamplesLeft == 0)
+		{
+			AXOut_WriteWavHeader(s_dumpFile, s_dumpSamplesWritten);
+			fclose(s_dumpFile); s_dumpFile = nullptr;
+			cemuLog_log(LogType::Force, "Thor: audio dump finished ({} frames)", s_dumpSamplesWritten);
+		}
+	}
+
 	uint32 numProcessedFrames = 0;
 
 	void resetNumProcessedFrames()
@@ -307,7 +349,12 @@ namespace snd_core
 				cemuLog_log(LogType::Force, "AXOut stereo fold rms FL={:.0f} FR={:.0f} SL={:.0f} SR={:.0f} FC={:.0f} LFE={:.0f}",
 					sqrt(s_energy[0] / n), sqrt(s_energy[1] / n), sqrt(s_energy[2] / n), sqrt(s_energy[3] / n), sqrt(s_energy[4] / n), sqrt(s_energy[5] / n));
 				for (auto& e : s_energy) e = 0;
+				extern uint32 g_axLpfStatVoices, g_axLpfStatOn, g_axBiquadStatOn; extern uint64 g_axLpfStatA0Sum; extern bool g_axLpfLegacy;
+				cemuLog_log(LogType::Force, "AX filters: voiceFrames {} lpfOn {} (avg a0 {}) biquadOn {} lpfMode {}", g_axLpfStatVoices, g_axLpfStatOn,
+					g_axLpfStatOn ? (uint32)(g_axLpfStatA0Sum / g_axLpfStatOn) : 0, g_axBiquadStatOn, g_axLpfLegacy ? "legacy" : "fixed");
+				g_axLpfStatVoices = g_axLpfStatOn = g_axBiquadStatOn = 0; g_axLpfStatA0Sum = 0;
 			}
+			AXOut_DumpFrame(__AXTVDMABuffers[frameIndex], numSamples);
 			AIInitDMA(__AXTVDMABuffers[frameIndex], numSamples * 2 * sizeof(sint16)); // 2ch output
 		}
 		else if (__AXMode[AX_DEV_TV] == AX_MODE_MONO)

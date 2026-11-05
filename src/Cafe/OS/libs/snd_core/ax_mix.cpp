@@ -2,6 +2,7 @@
 #include "Cafe/OS/libs/snd_core/ax_internal.h"
 #include "Cafe/HW/MMU/MMU.h"
 #include "config/ActiveSettings.h"
+#include <algorithm>
 
 void mic_updateOnAXFrame();
 
@@ -747,19 +748,45 @@ namespace snd_core
 		internalShadowCopy->biquad.xn2 = _swapEndianU16((sint16)(xn2));
 	}
 
+	// Thor: AX one-pole low-pass is y[n] = (a0*x[n] + b0*y[n-1]) >> 15 with a0 + b0 = 0x7FFF (see AXComputeLpfCoefs,
+	// matches Dolphin's DSP HLE). Cemu used to SUBTRACT the feedback term, which turns the filter into a
+	// near-silent high-pass for low cutoffs. BO2 runs its distance/occlusion filtering through this, so gunshots
+	// and zombies came out muffled or missing. yn1 is kept in s16 sample units (sampleData is s16 * 256).
+	bool g_axLpfLegacy = false; // runtime A/B: <userdata>/lpf_legacy present => old behaviour
+	uint32 g_axLpfStatVoices = 0, g_axLpfStatOn = 0, g_axBiquadStatOn = 0;
+	uint64 g_axLpfStatA0Sum = 0;
+
 	void AXVoiceMix_ApplyLowPass(AXVPBInternal_t* internalShadowCopy, float* sampleData, sint32 sampleCount)
 	{
+		g_axLpfStatVoices++;
+		if (internalShadowCopy->biquad.on != AX_BIQUAD_OFF)
+			g_axBiquadStatOn++;
 		if (internalShadowCopy->lpf.on == _swapEndianU16(AX_LPF_OFF))
 			return;
-		float a0 = (float)_swapEndianS16(internalShadowCopy->lpf.a0) / 32767.0f;
-		float b0 = (float)_swapEndianS16(internalShadowCopy->lpf.b0) / 32767.0f;
-		float prevSample = (float)_swapEndianS16((sint16)internalShadowCopy->lpf.yn1) * 256.0f / 32767.0f;
+		g_axLpfStatOn++;
+		g_axLpfStatA0Sum += (uint16)_swapEndianU16(internalShadowCopy->lpf.a0);
+		if (g_axLpfLegacy)
+		{
+			float a0 = (float)_swapEndianS16(internalShadowCopy->lpf.a0) / 32767.0f;
+			float b0 = (float)_swapEndianS16(internalShadowCopy->lpf.b0) / 32767.0f;
+			float prevSample = (float)_swapEndianS16((sint16)internalShadowCopy->lpf.yn1) * 256.0f / 32767.0f;
+			for (sint32 i = 0; i < sampleCount; i++)
+			{
+				sampleData[i] = a0 * sampleData[i] - b0 * prevSample;
+				prevSample = sampleData[i];
+			}
+			internalShadowCopy->lpf.yn1 = (uint16)_swapEndianS16((sint16)std::clamp(prevSample / 256.0f * 32767.0f, -32768.0f, 32767.0f));
+			return;
+		}
+		const float a0 = (float)(uint16)_swapEndianU16(internalShadowCopy->lpf.a0) / 32768.0f;
+		const float b0 = (float)(uint16)_swapEndianU16(internalShadowCopy->lpf.b0) / 32768.0f;
+		float y = (float)(sint16)_swapEndianU16(internalShadowCopy->lpf.yn1) * 256.0f;
 		for (sint32 i = 0; i < sampleCount; i++)
 		{
-			sampleData[i] = a0 * sampleData[i] - b0 * prevSample;
-			prevSample = sampleData[i];
+			y = a0 * sampleData[i] + b0 * y;
+			sampleData[i] = y;
 		}
-		internalShadowCopy->lpf.yn1 = (uint16)_swapEndianS16((sint16)(prevSample / 256.0f * 32767.0f));
+		internalShadowCopy->lpf.yn1 = _swapEndianU16((uint16)(sint16)std::clamp(y / 256.0f, -32768.0f, 32767.0f));
 	}
 
 	// mix audio generated from voice into main bus and aux buses

@@ -193,6 +193,7 @@ void ExceptionHandler_DumpAllThreads()
 	CrashLog_WriteLine("== end of thread dump");
 }
 
+namespace snd_core { extern bool g_axLpfLegacy; void AXOut_StartAudioDump(const std::string& path, uint32 seconds); }
 static void ThorDiag_WatchThread()
 {
 	while (true)
@@ -205,6 +206,24 @@ static void ThorDiag_WatchThread()
 			fs::remove(trigger, ec);
 			if (CafeSystem::IsTitleRunning())
 				ExceptionHandler_DumpAllThreads();
+		}
+		// audio A/B + capture (BO2 muffled gunshots)
+		{
+			bool legacy = fs::exists(ActiveSettings::GetUserDataPath("lpf_legacy"), ec);
+			namespace sc = snd_core;
+			if (legacy != sc::g_axLpfLegacy)
+			{
+				sc::g_axLpfLegacy = legacy;
+				cemuLog_log(LogType::Force, "Thor: AX low-pass mode -> {}", legacy ? "legacy" : "fixed");
+			}
+			fs::path at = ActiveSettings::GetUserDataPath("dump_audio");
+			if (fs::exists(at, ec))
+			{
+				uint32 secs = 20;
+				if (FILE* f = fopen(_pathToUtf8(at).c_str(), "rb")) { int v = 0; if (fscanf(f, "%d", &v) == 1 && v > 0 && v <= 600) secs = v; fclose(f); }
+				fs::remove(at, ec);
+				sc::AXOut_StartAudioDump(_pathToUtf8(ActiveSettings::GetUserDataPath("audio_dump.wav")), secs);
+			}
 		}
 	}
 }
