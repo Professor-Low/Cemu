@@ -339,7 +339,7 @@ namespace snd_core
 			extern FILE* g_axDrcDumpFile; extern uint32 g_axDrcDumpLeft, g_axDrcDumpWritten;
 			static double s_drcFoldE = 0; static uint64 s_drcFoldN = 0;
 			const sint32 drcN = AIGetSamplesPerChannel(AX_DEV_DRC);
-			const bool foldDrc = g_axDrcFoldMode == 1 && g_axDrcFoldGain > 0.0f && !AXOut_IsPadAudioActive() && drcN == numSamples;
+			const bool foldDrc = g_axDrcFoldMode == 4 && g_axDrcFoldGain > 0.0f && !AXOut_IsPadAudioActive() && drcN == numSamples;
 			const sint32* drcIn = __AXDRCBuffer48.GetPtr();
 			const bool drcMono = __AXMode[AX_DEV_DRC] == AX_MODE_MONO;
 			sint16 drcDump[2 * 1024];

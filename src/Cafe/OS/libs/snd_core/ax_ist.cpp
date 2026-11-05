@@ -1,5 +1,7 @@
 #include "Cafe/OS/libs/snd_core/ax.h"
 #include "Cafe/OS/libs/snd_core/ax_internal.h"
+#include <algorithm>
+#include <cmath>
 #include "Cafe/HW/Espresso/PPCState.h"
 #include "Cafe/HW/Espresso/PPCCallback.h"
 #include "Cafe/OS/libs/coreinit/coreinit_Thread.h"
@@ -503,6 +505,41 @@ namespace snd_core
 			__AXFinalMixOutputChannelCount[i] = (sint32)cbStruct->numChannelOutput;
 		}
 
+		// Thor: add the GamePad-routed sends into the finished TV mix, scaled by the game's own TV final-mix gain
+		{
+			extern float g_axDrcSide[2][AX_SAMPLES_MAX]; extern sint32 g_axDrcSideN; extern double g_axTvAuxInE;
+			extern sint32 g_axDrcFoldMode; extern float g_axDrcFoldGain;
+			static double s_tvFinalE = 0, s_auxE = 0, s_sideE = 0; static float s_gain = 4.0f; static uint32 s_frames = 0;
+			// TV final mix L/R energy (game output, before our add)
+			const bool tvAt32 = !isRenderer48 && __AXDeviceUpsampleStage[AX_DEV_TV] != AX_UPSAMPLE_STAGE_BEFORE_FINALMIX;
+			sint32* tvL = tvAt32 || isRenderer48 ? __AXTempFinalMixTVBuffer.GetPtr() : nullptr;
+			const sint32 n = (sint32)AXGetInputSamplesPerFrame();
+			if (tvL && g_axDrcSideN == n)
+			{
+				sint32* tvR = tvL + n;
+				double fe = 0, se = 0;
+				for (sint32 i = 0; i < n; i++) { double a = _swapEndianS32(tvL[i]), b = _swapEndianS32(tvR[i]); fe += a * a + b * b; se += (double)g_axDrcSide[0][i] * g_axDrcSide[0][i] + (double)g_axDrcSide[1][i] * g_axDrcSide[1][i]; }
+				s_tvFinalE += fe; s_auxE += g_axTvAuxInE; s_sideE += se; g_axTvAuxInE = 0;
+				if (g_axDrcFoldMode == 1 && g_axDrcFoldGain > 0.0f)
+				{
+					const float g = s_gain * g_axDrcFoldGain;
+					for (sint32 i = 0; i < n; i++)
+					{
+						tvL[i] = _swapEndianS32((sint32)std::clamp((float)_swapEndianS32(tvL[i]) + g * g_axDrcSide[0][i], -8388608.0f, 8388607.0f));
+						tvR[i] = _swapEndianS32((sint32)std::clamp((float)_swapEndianS32(tvR[i]) + g * g_axDrcSide[1][i], -8388608.0f, 8388607.0f));
+					}
+				}
+				if (++s_frames % 1111 == 0) // ~3.3s: re-estimate the game's TV final-mix gain (output rms / aux-send rms)
+				{
+					if (s_auxE > 1e6)
+						s_gain = std::clamp(s_gain * 0.5f + 0.5f * (float)sqrt(s_tvFinalE / s_auxE), 1.0f, 16.0f);
+					if (s_frames % 3333 == 0)
+						cemuLog_log(LogType::Force, "AX DRC sends->TV: mode {} tvGain est {:.2f} x user {:.2f} | tvFinal rms {:.0f} tvAuxSend rms {:.0f} drcSend rms {:.0f}",
+							g_axDrcFoldMode, s_gain, g_axDrcFoldGain, sqrt(s_tvFinalE / (n * 2.0 * 1111)), sqrt(s_auxE / (n * 2.0 * 1111)), sqrt(s_sideE / (n * 2.0 * 1111)));
+					s_tvFinalE = s_auxE = s_sideE = 0;
+				}
+			}
+		}
 		// handle upsampling
 		if (isRenderer48)
 		{

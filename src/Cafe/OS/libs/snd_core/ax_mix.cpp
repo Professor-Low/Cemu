@@ -839,7 +839,11 @@ namespace snd_core
 	uint16 g_axDrcAuxReturnVolume[3] = { 0x8000, 0x8000, 0x8000 };
 	uint16 g_axDrcDeviceVolume = 0x8000;
 	FILE* g_axDrcDumpFile = nullptr; uint32 g_axDrcDumpLeft = 0, g_axDrcDumpWritten = 0;
-	sint32 g_axDrcFoldMode = 1; // <userdata>/drc_fold_mode: 0 off, 1 fold DRC final output (default), 2/3 experimental mix-level folds
+	sint32 g_axDrcFoldMode = 1; // <userdata>/drc_fold_mode: 0 off, 1 DRC sends -> TV final mix (default), 2/3 mix-level experiments, 4 DRC final output fold
+	// Thor: BO2 mutes its own DRC final mix, so the GamePad-routed voices (player gunfire body, nearby zombies) are
+	// captured here as a stereo downmix of the DRC aux sends and added after the TV final-mix callback (ax_ist.cpp).
+	float g_axDrcSide[2][AX_SAMPLES_MAX]; sint32 g_axDrcSideN = 0;
+	double g_axTvAuxInE = 0;
 	double g_axDrcAuxInE[3] = {}, g_axDrcAuxOutE[3] = {}; bool g_axDrcAuxHasCb[3] = {}; uint32 g_axDrcDryUsed[3] = {}; uint64 g_axDrcMeterSamples = 0;
 	struct VoiceTrace
 	{
@@ -1106,6 +1110,35 @@ namespace snd_core
 				}
 			}
 			g_axDrcMeterSamples += busLen;
+			// stereo downmix of all DRC aux sends (s16 units)
+			for (size_t i = 0; i < sampleCount; i++)
+			{
+				float l = 0, r = 0;
+				for (sint32 auxBus = 0; auxBus < AX_AUX_BUS_COUNT; auxBus++)
+				{
+					const float* b = __AXMixBufferDRC + (1 + auxBus) * busLen;
+					l += b[i] + 0.7071f * b[sampleCount * 2 + i];
+					r += b[sampleCount + i] + 0.7071f * b[sampleCount * 3 + i];
+				}
+				g_axDrcSide[0][i] = l / 256.0f; g_axDrcSide[1][i] = r / 256.0f;
+			}
+			g_axDrcSideN = (sint32)sampleCount;
+			// TV aux send level (L/R, s16 units) for matching the game's TV final-mix gain
+			{
+				const size_t tvBusLen = sampleCount * AX_TV_CHANNEL_COUNT;
+				double e = 0;
+				for (size_t i = 0; i < sampleCount; i++)
+				{
+					float l = 0, r = 0;
+					for (sint32 auxBus = 0; auxBus < AX_AUX_BUS_COUNT; auxBus++)
+					{
+						const float* b = __AXMixBufferTV + (1 + auxBus) * tvBusLen;
+						l += b[i]; r += b[sampleCount + i];
+					}
+					l /= 256.0f; r /= 256.0f; e += (double)l * l + (double)r * r;
+				}
+				g_axTvAuxInE += e;
+			}
 		}
 		// Thor: no GamePad speaker. Games (BO2) route the GamePad player's own sounds - gunshots, nearby zombies -
 		// to the DRC. When no pad audio device is open, fold the DRC main bus into the TV main bus so it is heard.
