@@ -304,15 +304,15 @@ namespace snd_core
 		if (__AXMode[AX_DEV_TV] == AX_MODE_6CH && tvDevChannels == 2)
 		{
 			// Thor: game mixed 5.1 (AX order L R SL SR C LFE) for a stereo speaker. Rear channels get a high-shelf cut
-			// (~1.8 kHz, up to -12 dB) so sounds behind you are audibly darker than the same sound in front.
+			// (2-pole ~1.7 kHz: -10 dB @3 kHz, -15 dB @6 kHz at full cue) so sounds behind you are audibly darker than the same sound in front.
 			const sint32* in = __AXTVBuffer48.GetPtr();
 			sint16* dmaOutputBuffer = __AXTVDMABuffers[frameIndex];
-			static float s_lpL = 0, s_lpR = 0;
+			static float s_lpL = 0, s_lpR = 0, s_lpL2 = 0, s_lpR2 = 0;
 			static uint32 s_diag = 0; static double s_e[6] = {};
 			const float cue = std::clamp(g_axRearCue, 0.0f, 1.0f);
-			const float a = 0.21f; // one-pole, fc ~1.8 kHz @ 48 kHz
-			const float hi = 1.0f - 0.75f * cue; // high-frequency gain kept on rear channels
-			const float rg = 0.7071f + 0.15f * cue; // rear level (a little up to make up for the lost highs)
+			const float a = 0.22f; // two cascaded one-poles @ 48 kHz
+			const float hi = 1.0f - 0.85f * cue; // high-frequency gain kept on rear channels
+			const float rg = 0.7071f + 0.093f * cue; // rear level (a little up to make up for the lost highs)
 			auto soft = [](float v) -> float {
 				const float knee = 24000.0f, room = 32767.0f - knee;
 				float m = fabsf(v);
@@ -325,9 +325,10 @@ namespace snd_core
 				float ch[6];
 				for (int c = 0; c < 6; c++) { float v = (float)_swapEndianS32(in[numSamples * c + i]); ch[c] = std::isfinite(v) ? v : 0.0f; s_e[c] += (double)ch[c] * ch[c]; }
 				s_lpL += a * (ch[2] - s_lpL); s_lpR += a * (ch[3] - s_lpR);
-				if (!std::isfinite(s_lpL)) s_lpL = 0; if (!std::isfinite(s_lpR)) s_lpR = 0;
-				const float rl = rg * (s_lpL + hi * (ch[2] - s_lpL));
-				const float rr = rg * (s_lpR + hi * (ch[3] - s_lpR));
+				s_lpL2 += a * (s_lpL - s_lpL2); s_lpR2 += a * (s_lpR - s_lpR2);
+				if (!std::isfinite(s_lpL2) || !std::isfinite(s_lpR2)) { s_lpL = s_lpR = s_lpL2 = s_lpR2 = 0; }
+				const float rl = rg * (s_lpL2 + hi * (ch[2] - s_lpL2));
+				const float rr = rg * (s_lpR2 + hi * (ch[3] - s_lpR2));
 				const float fl = ch[0] + 0.7071f * ch[4] + 0.5f * ch[5] + rl;
 				const float fr = ch[1] + 0.7071f * ch[4] + 0.5f * ch[5] + rr;
 				dmaOutputBuffer[0] = _swapEndianS16((sint16)std::clamp((sint32)soft(fl), -32768, 32767));
