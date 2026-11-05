@@ -193,7 +193,7 @@ void ExceptionHandler_DumpAllThreads()
 	CrashLog_WriteLine("== end of thread dump");
 }
 
-namespace snd_core { extern bool g_axLpfLegacy; void AXOut_StartAudioDump(const std::string& path, uint32 seconds); }
+namespace snd_core { extern bool g_axLpfLegacy; extern bool g_axVoiceTrace; void AXOut_StartAudioDump(const std::string& path, uint32 seconds); }
 static void ThorDiag_WatchThread()
 {
 	while (true)
@@ -216,6 +216,8 @@ static void ThorDiag_WatchThread()
 				sc::g_axLpfLegacy = legacy;
 				cemuLog_log(LogType::Force, "Thor: AX low-pass mode -> {}", legacy ? "legacy" : "fixed");
 			}
+			bool trace = fs::exists(ActiveSettings::GetUserDataPath("trace_voices"), ec);
+			if (trace != sc::g_axVoiceTrace) { sc::g_axVoiceTrace = trace; cemuLog_log(LogType::Force, "Thor: voice trace {}", trace ? "ON" : "OFF"); }
 			fs::path at = ActiveSettings::GetUserDataPath("dump_audio");
 			if (fs::exists(at, ec))
 			{

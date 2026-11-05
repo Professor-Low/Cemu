@@ -831,6 +831,61 @@ namespace snd_core
 		// todo
 	}
 
+	// ---- Thor voice tracer (<userdata>/trace_voices present): one log line per voice lifetime -------------
+	bool g_axVoiceTrace = false;
+	struct VoiceTrace
+	{
+		uint64 firstFrame{}, lastFrame{};
+		uint32 frames{};
+		double rawE{}, outE{}; float outMax{};
+		uint32 startAddr{}; uint16 fmt{}; uint32 src{};
+		uint16 ve{}, veMax{}; uint32 tvMain{}, tvAux{}, drc{}; uint16 lpfA0{}; uint16 lpfOn{};
+	};
+	static VoiceTrace s_vt[256];
+	static uint64 s_vtFrame = 0;
+	static void AXVoiceTrace_Emit(sint32 idx, VoiceTrace& t)
+	{
+		if (t.frames == 0) return;
+		cemuLog_log(LogType::Force, "VT v{:02} ago{:.2f} dur{}ms fmt{} src{:05x} addr{:08x} ve{:04x}/{:04x} tvMain{:05} tvAux{:05} drc{:05} lpf{}:{:04x} raw{:.0f} out{:.0f} outMax{:.0f}",
+			idx, (double)(s_vtFrame - t.firstFrame) * 0.003, t.frames * 3, t.fmt, t.src, t.startAddr, t.ve, t.veMax, t.tvMain, t.tvAux, t.drc, t.lpfOn, t.lpfA0,
+			sqrt(t.rawE / t.frames), sqrt(t.outE / t.frames), t.outMax);
+		t = VoiceTrace{};
+	}
+	void AXVoiceTrace_Account(AXVPBInternal_t* v, float* data, size_t n, float rawRms, uint64 frame)
+	{
+		sint32 idx = (sint32)(v - __AXVPBInternalVoiceShadowCopyArrayPtr);
+		if (idx < 0 || idx >= 256) return;
+		s_vtFrame = frame;
+		VoiceTrace& t = s_vt[idx];
+		uint32 addr = v->internalOffsets.GetCurrentOffset32();
+		if (t.frames && t.lastFrame + 1 != frame)
+			AXVoiceTrace_Emit(idx, t);
+		double e = 0; for (size_t i = 0; i < n; i++) e += (double)data[i] * data[i];
+		float outRms = (float)sqrt(e / (double)n) / 256.0f;
+		if (t.frames == 0)
+		{
+			t.firstFrame = frame; t.startAddr = addr; t.fmt = _swapEndianU16(v->internalOffsets.format); t.src = v->src.GetSrcRatio32();
+			t.ve = (uint16)v->veVolume;
+		}
+		t.lastFrame = frame; t.frames++;
+		t.rawE += (double)rawRms * rawRms; t.outE += (double)outRms * outRms; t.outMax = std::max(t.outMax, outRms);
+		t.veMax = std::max<uint16>(t.veMax, (uint16)v->veVolume);
+		uint32 main = 0, aux = 0, drc = 0;
+		for (int c = 0; c < 6; c++)
+		{
+			main = std::max<uint32>(main, _swapEndianU16(v->deviceMixTV[c * 4 + 0].vol));
+			for (int b = 1; b < 4; b++) aux = std::max<uint32>(aux, _swapEndianU16(v->deviceMixTV[c * 4 + b].vol));
+		}
+		for (int i = 0; i < AX_BUS_COUNT * AX_DRC_CHANNEL_COUNT * 2; i++) drc = std::max<uint32>(drc, _swapEndianU16(v->deviceMixDRC[i].vol));
+		t.tvMain = std::max(t.tvMain, main); t.tvAux = std::max(t.tvAux, aux); t.drc = std::max(t.drc, drc);
+		t.lpfOn = _swapEndianU16(v->lpf.on); if (t.lpfOn) t.lpfA0 = _swapEndianU16(v->lpf.a0);
+	}
+	void AXVoiceTrace_Flush()
+	{
+		for (sint32 i = 0; i < 256; i++)
+			if (s_vt[i].frames && s_vt[i].lastFrame + 1 < s_vtFrame) AXVoiceTrace_Emit(i, s_vt[i]);
+	}
+
 	void AXMix_ProcessVoices(AXVPBInternal_t* firstVoice)
 	{
 		if (firstVoice == nullptr)
@@ -839,16 +894,28 @@ namespace snd_core
 		AXVPBInternal_t* internalVoice = firstVoice;
 		cemu_assert_debug(sndGeneric.initParam.frameLength == 0);
 		float tmpSampleBuffer[AX_SAMPLES_MAX];
+		static uint64 s_traceFrame = 0;
+		s_traceFrame++;
 		while (internalVoice)
 		{
 			AXVoiceMix_DecodeSamples(internalVoice, tmpSampleBuffer, sampleCount);
+			float rawRms = 0.0f;
+			if (g_axVoiceTrace)
+			{
+				double e = 0; for (size_t i = 0; i < sampleCount; i++) e += (double)tmpSampleBuffer[i] * tmpSampleBuffer[i];
+				rawRms = (float)sqrt(e / (double)sampleCount) / 256.0f;
+			}
 			AXVoiceMix_ApplyADSR(internalVoice, tmpSampleBuffer, sampleCount);
 			AXVoiceMix_ApplyBiquad(internalVoice, tmpSampleBuffer, sampleCount);
 			AXVoiceMix_ApplyLowPass(internalVoice, tmpSampleBuffer, sampleCount);
+			if (g_axVoiceTrace)
+				AXVoiceTrace_Account(internalVoice, tmpSampleBuffer, sampleCount, rawRms, s_traceFrame);
 			AXVoiceMix_MixIntoBuses(internalVoice, tmpSampleBuffer, sampleCount, sampleCount);
 			// next
 			internalVoice = internalVoice->nextToProcess.GetPtr();
 		}
+		if (g_axVoiceTrace)
+			AXVoiceTrace_Flush();
 	}
 
 	void AXMix_MergeBusSamples(float* input, sint32* output, sint32 sampleCount, uint16& volume, sint16 delta)
