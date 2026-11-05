@@ -8,6 +8,7 @@
 #include "config/ActiveSettings.h"
 #include "Cafe/HW/MMU/MMU.h"
 #include "Cafe/HW/Espresso/PPCState.h"
+#include "Cafe/OS/RPL/rpl_structs.h"
 #include <fstream>
 
 namespace coreinit
@@ -554,9 +555,28 @@ namespace coreinit
 	static void ThorDumpBo2SoundBanks(const char* tag)
 	{
 		auto rd32 = [](uint32 a) -> uint32 { return memory_isAddressRangeAccessible(a, 4) ? _swapEndianU32(*(uint32*)memory_getPointerFromVirtualOffset(a)) : 0; };
-		const uint32 insLis = rd32(0x0264f164), insAddi = rd32(0x0264f16c);
+		RPLModule* mod = RPLLoader_FindModuleByName("t6mp_cafef_rpl");
+		if (!mod)
+		{
+			cemuLog_log(LogType::Force, "Thor: bank dump skipped, t6mp_cafef_rpl not found");
+			return;
+		}
+		auto reloc = [mod](uint32 a) -> uint32 {
+			for (sint32 i = 0; i < mod->rplHeader.sectionTableEntryCount; i++)
+			{
+				auto sect = mod->sectionTablePtr + i;
+				uint32 va = sect->virtualAddress, sz = sect->sectionSize;
+				if (a >= va && a < va + sz && mod->sectionAddressTable2[i].ptr)
+					return a - va + memory_getVirtualOffsetFromPointer(mod->sectionAddressTable2[i].ptr);
+			}
+			return 0;
+		};
+		const uint32 insLis = rd32(reloc(0x0264f164)), insAddi = rd32(reloc(0x0264f16c));
 		if ((insLis >> 26) != 15 || (insAddi >> 26) != 14)
+		{
+			cemuLog_log(LogType::Force, "Thor: bank dump skipped, pattern mismatch {:08x} {:08x} at {:08x}", insLis, insAddi, reloc(0x0264f164));
 			return; // not t6mp v0
+		}
 		const uint32 base = ((insLis & 0xFFFF) << 16) + (uint32)(sint32)(sint16)(insAddi & 0xFFFF);
 		std::ofstream f(ActiveSettings::GetUserDataPath("bankdump_{}.bin", tag), std::ios::binary | std::ios::trunc);
 		auto put = [&](uint32 addr, uint32 len) {
